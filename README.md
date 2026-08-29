@@ -33,10 +33,30 @@ omarchy plugin remove stappmus.activity-monitor
 
 - Click the bar icon to open. `e` expands, Esc collapses.
 - `/` search processes. `j` / `k` move. Click a column header to sort.
-- `s` opens settings — update speed, graph history, °C/°F, and whether to estimate process watts.
+- `s` opens settings — update speed, graph history, °C/°F, the bar graph, and
+  whether to estimate process watts.
 - `x` can close an app you selected, after a confirmation.
 
 Settings are saved with your bar layout and apply immediately.
+
+## The bar graph
+
+Off by default. Set it to CPU or Memory in settings and the bar icon is replaced
+by a live sparkline, themed like the rest of the panel. It behaves exactly like
+the icon it stands in for: click to open, hover for a quick CPU and RAM reading.
+
+Width is a setting too. The default is square — the same slot the icon occupied,
+so it lines up with everything else on the bar — and 44, 72, or 110 px give the
+trace more history to spread across.
+
+This is the one setting that keeps a reader running while the panel is closed.
+It stays deliberately cheap: only the resources snapshot is sampled, on a slower
+3 s cadence, and processes, GPU, storage, and power estimates stay off until you
+actually open the panel. Turn it back to Off and the plugin goes quiet again.
+
+One advanced override can be set directly on the widget's entry in
+`~/.config/omarchy/shell.json`, alongside the existing interval overrides:
+`backgroundRefreshIntervalMs` (1000–30000, default 3000).
 
 ## A few honest details
 
