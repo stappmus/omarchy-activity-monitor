@@ -14,8 +14,16 @@ Item {
 
   property var settings: ({})
   property bool active: false
+  property bool background: false
   property bool expanded: false
   property bool processPowerEnabled: true
+
+  // Sampling runs in two tiers. While the panel is open (`active`) every
+  // reader is scheduled. While it is closed and the bar graph is enabled
+  // (`background`) only the resources reader runs, on a slower cadence, so a
+  // closed panel still costs almost nothing.
+  readonly property bool sampling: active || background
+  property bool _sessionRunning: false
 
   readonly property string statsHelperPath: decodeURIComponent(
     String(Qt.resolvedUrl("activity-sampler")).replace("file://", ""))
@@ -50,6 +58,7 @@ Item {
   readonly property int gpuRefreshInterval: intervalSetting("gpuRefreshIntervalMs", 2000, 1000, 15000, samplingProfile.gpus)
   readonly property int storageRefreshInterval: intervalSetting("storageRefreshIntervalMs", 30000, 10000, 120000, samplingProfile.storage)
   readonly property int historySamples: boundedSetting("historySamples", 60, 20, 240)
+  readonly property int backgroundRefreshInterval: boundedSetting("backgroundRefreshIntervalMs", 3000, 1000, 30000)
 
   property var _snapshot: Model.emptySnapshot()
   property var _thermalSnapshot: Model.emptyThermalSnapshot()
@@ -109,46 +118,60 @@ Item {
 
   function scheduleNextDeadline() {
     deadlineScheduler.stop()
-    if (!active) return
+    if (!sampling) return
 
-    var next = Math.min(_resourceDue, _processDue, _thermalDue, _storageDue)
-    if (expanded && _gpuDue > 0) next = Math.min(next, _gpuDue)
+    var candidates = active
+      ? [_resourceDue, _processDue, _thermalDue, _storageDue, expanded ? _gpuDue : 0]
+      : [_resourceDue]
+    var next = 0
+    for (var i = 0; i < candidates.length; i++) {
+      var due = Number(candidates[i])
+      if (!isFinite(due) || due <= 0) continue
+      if (next <= 0 || due < next) next = due
+    }
+    if (next <= 0) return
     deadlineScheduler.interval = Math.max(1, Math.round(next - Date.now()))
     deadlineScheduler.start()
   }
 
+  function resourceInterval() {
+    return active ? refreshInterval : backgroundRefreshInterval
+  }
+
   function resetPeriodicDeadlines() {
     var now = Date.now()
-    _resourceDue = now + refreshInterval
-    _processDue = now + processRefreshInterval
-    _thermalDue = now + thermalRefreshInterval
-    _storageDue = now + storageRefreshInterval
-    _gpuDue = expanded ? now + gpuRefreshInterval : 0
+    _resourceDue = now + resourceInterval()
+    _processDue = active ? now + processRefreshInterval : 0
+    _thermalDue = active ? now + thermalRefreshInterval : 0
+    _storageDue = active ? now + storageRefreshInterval : 0
+    _gpuDue = active && expanded ? now + gpuRefreshInterval : 0
     scheduleNextDeadline()
   }
 
   function collectDueSnapshots() {
-    if (!active) return
+    if (!sampling) return
     var now = Date.now()
-    if (_resourceDue <= now + 1) {
+    if (_resourceDue > 0 && _resourceDue <= now + 1) {
       refreshResources()
-      _resourceDue = nextDeadline(_resourceDue, refreshInterval, now)
+      _resourceDue = nextDeadline(_resourceDue, resourceInterval(), now)
     }
-    if (_processDue <= now + 1) {
-      refreshProcessCycle()
-      _processDue = nextDeadline(_processDue, processRefreshInterval, now)
-    }
-    if (_thermalDue <= now + 1) {
-      refreshThermals()
-      _thermalDue = nextDeadline(_thermalDue, thermalRefreshInterval, now)
-    }
-    if (_storageDue <= now + 1) {
-      refreshStorage()
-      _storageDue = nextDeadline(_storageDue, storageRefreshInterval, now)
-    }
-    if (expanded && _gpuDue > 0 && _gpuDue <= now + 1) {
-      refreshGpus()
-      _gpuDue = nextDeadline(_gpuDue, gpuRefreshInterval, now)
+    if (active) {
+      if (_processDue > 0 && _processDue <= now + 1) {
+        refreshProcessCycle()
+        _processDue = nextDeadline(_processDue, processRefreshInterval, now)
+      }
+      if (_thermalDue > 0 && _thermalDue <= now + 1) {
+        refreshThermals()
+        _thermalDue = nextDeadline(_thermalDue, thermalRefreshInterval, now)
+      }
+      if (_storageDue > 0 && _storageDue <= now + 1) {
+        refreshStorage()
+        _storageDue = nextDeadline(_storageDue, storageRefreshInterval, now)
+      }
+      if (expanded && _gpuDue > 0 && _gpuDue <= now + 1) {
+        refreshGpus()
+        _gpuDue = nextDeadline(_gpuDue, gpuRefreshInterval, now)
+      }
     }
     scheduleNextDeadline()
   }
@@ -190,14 +213,14 @@ Item {
   }
 
   function startStatsReader() {
-    if (!active || statsReaderProc.running) return
+    if (!sampling || statsReaderProc.running) return
     _statsReaderReady = false
     _statsReaderBuffer = []
     statsReaderProc.running = true
   }
 
   function sendStatsRequest(kind) {
-    if (!active || statsPending(kind)) return
+    if (!sampling || statsPending(kind)) return
     setStatsPending(kind, true)
     statsReaderWatchdog.restart()
     if (!statsReaderProc.running) startStatsReader()
@@ -314,6 +337,7 @@ Item {
 
   function refresh() {
     refreshResources()
+    if (!active) return
     refreshProcessCycle()
     refreshThermals()
     refreshGpus()
@@ -329,7 +353,7 @@ Item {
       _metrics = Model.baselineMetrics(next, metrics)
       _previousSnapshot = next
       _snapshot = next
-      if (active) resourceWarmup.restart()
+      if (sampling) resourceWarmup.restart()
       return
     }
     _metrics = Model.nextMetrics(_previousSnapshot, next, metrics, historySamples)
@@ -460,9 +484,30 @@ Item {
     statsReaderRetry.stop()
   }
 
+  // Start/stop on the tier, not on a transition: with the bar graph enabled
+  // `sampling` is already true when the component is created, so relying on the
+  // change signal alone would never open the session.
+  function syncSession() {
+    if (sampling && !_sessionRunning) {
+      _sessionRunning = true
+      startSession()
+    } else if (!sampling && _sessionRunning) {
+      _sessionRunning = false
+      stopSession()
+    }
+  }
+
+  Component.onCompleted: syncSession()
+
+  onSamplingChanged: syncSession()
+
+  // Opening or closing the panel while the background tier keeps the session
+  // alive swaps cadences in place. History survives, so the bar graph does not
+  // blank out on every open.
   onActiveChanged: {
-    if (active) startSession()
-    else stopSession()
+    if (!_sessionRunning) return
+    if (active) refresh()
+    resetPeriodicDeadlines()
   }
 
   onExpandedChanged: {
@@ -495,6 +540,7 @@ Item {
   }
 
   onRefreshIntervalChanged: if (active) resetPeriodicDeadlines()
+  onBackgroundRefreshIntervalChanged: if (_sessionRunning && !active) resetPeriodicDeadlines()
   onProcessRefreshIntervalChanged: if (active) resetPeriodicDeadlines()
   onThermalRefreshIntervalChanged: if (active) resetPeriodicDeadlines()
   onGpuRefreshIntervalChanged: if (active) resetPeriodicDeadlines()
@@ -513,7 +559,7 @@ Item {
     }
     onExited: {
       root.resetStatsReaderState()
-      if (root.active) statsReaderRetry.restart()
+      if (root.sampling) statsReaderRetry.restart()
     }
   }
 
@@ -572,14 +618,14 @@ Item {
     id: statsReaderRetry
     interval: 250
     repeat: false
-    onTriggered: if (root.active) root.refresh()
+    onTriggered: if (root.sampling) root.refresh()
   }
 
   Timer {
     id: resourceWarmup
     interval: 300
     repeat: false
-    onTriggered: if (root.active) root.refreshResources()
+    onTriggered: if (root.sampling) root.refreshResources()
   }
 
   Timer {

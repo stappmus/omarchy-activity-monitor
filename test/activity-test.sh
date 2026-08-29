@@ -434,8 +434,13 @@ const manifest = requireFromRoot('manifest.json')
 const settingKeys = manifest.barWidget.schema.map(entry => entry.key)
 assertDeepEqual(
   settingKeys,
-  ['samplingSpeed', 'historySamples', 'temperatureUnit', 'showFrequencies', 'openExpanded', 'processPowerEnabled'],
+  ['samplingSpeed', 'historySamples', 'temperatureUnit', 'barGraph', 'barGraphLength', 'showFrequencies', 'openExpanded', 'processPowerEnabled'],
   'activity publishes the same focused preferences offered by its settings menu'
+)
+assertEqual(
+  manifest.barWidget.defaults.barGraph,
+  'Off',
+  'activity leaves the bar graph off until it is asked for'
 )
 JS
 
@@ -606,11 +611,19 @@ grep -Fq 'centerOnBar: false' "$ROOT/Panel.qml" ||
   fail "activity panel keeps compact and expanded layouts on the same bar anchor"
 pass "activity panel expansion preserves its bar anchor"
 
-grep -Fq 'implicitWidth: button.implicitWidth' "$ROOT/Panel.qml" ||
+grep -Eq 'implicitWidth: .*button\.implicitWidth' "$ROOT/Panel.qml" ||
   fail "activity bar widget does not expose its icon width"
-grep -Fq 'implicitHeight: button.implicitHeight' "$ROOT/Panel.qml" ||
+grep -Eq 'implicitHeight: .*button\.implicitHeight' "$ROOT/Panel.qml" ||
   fail "activity bar widget does not expose its icon height"
 pass "activity bar widget exposes its icon geometry"
+
+grep -Fq 'background: root.barGraphEnabled' "$ROOT/Panel.qml" ||
+  fail "activity bar graph does not drive the background sampling tier"
+grep -Fq 'readonly property bool sampling: active || background' "$ROOT/ActivityController.qml" ||
+  fail "activity controller does not gate sampling on the background tier"
+grep -Fq 'if (!active) return' "$ROOT/ActivityController.qml" ||
+  fail "activity controller fans out to every reader outside the open panel"
+pass "activity bar graph samples resources only while the panel is closed"
 
 grep -Fq 'id: headerActions' "$ROOT/Panel.qml" ||
   fail "activity header actions do not share a header row"
@@ -695,7 +708,7 @@ grep -Fq 'refreshProcessCycle()' "$controller_file" ||
   fail "activity panel does not coordinate energy and process refreshes"
 grep -Fq 'id: deadlineScheduler' "$controller_file" &&
   grep -Fq 'function collectDueSnapshots()' "$controller_file" &&
-  grep -Fq '_resourceDue = nextDeadline(_resourceDue, refreshInterval, now)' "$controller_file" &&
+  grep -Fq '_resourceDue = nextDeadline(_resourceDue, resourceInterval(), now)' "$controller_file" &&
   grep -Fq '_processDue = nextDeadline(_processDue, processRefreshInterval, now)' "$controller_file" &&
   grep -Fq '_thermalDue = nextDeadline(_thermalDue, thermalRefreshInterval, now)' "$controller_file" &&
   grep -Fq '_gpuDue = nextDeadline(_gpuDue, gpuRefreshInterval, now)' "$controller_file" &&
