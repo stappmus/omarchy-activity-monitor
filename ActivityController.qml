@@ -16,6 +16,11 @@ Item {
   property bool active: false
   property bool expanded: false
   property bool processPowerEnabled: true
+  // Lets a caller (e.g. a bar-widget readout) keep GPU sampling warm without
+  // paying for the process table or power reader, which stay tied to the
+  // detail view actually being open.
+  property bool gpuBarEnabled: false
+  readonly property bool gpuSamplingActive: expanded || gpuBarEnabled
 
   readonly property string statsHelperPath: decodeURIComponent(
     String(Qt.resolvedUrl("activity-sampler")).replace("file://", ""))
@@ -112,7 +117,7 @@ Item {
     if (!active) return
 
     var next = Math.min(_resourceDue, _processDue, _thermalDue, _storageDue)
-    if (expanded && _gpuDue > 0) next = Math.min(next, _gpuDue)
+    if (gpuSamplingActive && _gpuDue > 0) next = Math.min(next, _gpuDue)
     deadlineScheduler.interval = Math.max(1, Math.round(next - Date.now()))
     deadlineScheduler.start()
   }
@@ -123,7 +128,7 @@ Item {
     _processDue = now + processRefreshInterval
     _thermalDue = now + thermalRefreshInterval
     _storageDue = now + storageRefreshInterval
-    _gpuDue = expanded ? now + gpuRefreshInterval : 0
+    _gpuDue = gpuSamplingActive ? now + gpuRefreshInterval : 0
     scheduleNextDeadline()
   }
 
@@ -146,7 +151,7 @@ Item {
       refreshStorage()
       _storageDue = nextDeadline(_storageDue, storageRefreshInterval, now)
     }
-    if (expanded && _gpuDue > 0 && _gpuDue <= now + 1) {
+    if (gpuSamplingActive && _gpuDue > 0 && _gpuDue <= now + 1) {
       refreshGpus()
       _gpuDue = nextDeadline(_gpuDue, gpuRefreshInterval, now)
     }
@@ -226,7 +231,7 @@ Item {
   }
 
   function refreshGpus() {
-    if (expanded) sendStatsRequest("gpus")
+    if (gpuSamplingActive) sendStatsRequest("gpus")
   }
 
   function refreshStorage() {
@@ -350,7 +355,7 @@ Item {
   }
 
   function consumeGpus(raw) {
-    if (!expanded) return
+    if (!gpuSamplingActive) return
     var next = Model.parseGpuSnapshot(raw)
     if (next.schema !== 1 || next.sample <= 0) return
     if (_previousGpuSnapshot.sample <= 0) {
@@ -469,9 +474,11 @@ Item {
     if (!expanded) {
       stopProcessPowerReader()
       resetProcessPowerMeasurement()
-      resetGpuMeasurement()
-      _gpuDue = 0
-      scheduleNextDeadline()
+      if (!gpuBarEnabled) {
+        resetGpuMeasurement()
+        _gpuDue = 0
+        scheduleNextDeadline()
+      }
     } else if (active) {
       if (processPowerEnabled)
         _previousProcessPowerSnapshot = Model.emptyPackagePowerSnapshot()
@@ -479,6 +486,22 @@ Item {
       refreshProcessCycle()
       refreshGpus()
       _gpuDue = Date.now() + gpuRefreshInterval
+      scheduleNextDeadline()
+    }
+  }
+
+  onGpuBarEnabledChanged: {
+    if (expanded) return
+    if (gpuBarEnabled) {
+      if (active) {
+        _previousGpuSnapshot = Model.emptyGpuSnapshot()
+        refreshGpus()
+        _gpuDue = Date.now() + gpuRefreshInterval
+        scheduleNextDeadline()
+      }
+    } else {
+      resetGpuMeasurement()
+      _gpuDue = 0
       scheduleNextDeadline()
     }
   }
@@ -593,7 +616,7 @@ Item {
     id: gpuWarmup
     interval: 300
     repeat: false
-    onTriggered: if (root.active && root.expanded) root.refreshGpus()
+    onTriggered: if (root.active && root.gpuSamplingActive) root.refreshGpus()
   }
 
   Timer {
