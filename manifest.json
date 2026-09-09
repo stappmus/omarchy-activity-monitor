@@ -32,7 +32,8 @@
       "processPowerEnabled": true,
       "showCpuInBar": true,
       "showMemoryInBar": true,
-      "showGpuInBar": false
+      "showGpuInBar": false,
+      "showBarIcons": false
     },
     "schema": [
       {
@@ -98,6 +99,13 @@
         "label": "Show GPU in bar",
         "defaultValue": false,
         "description": "Add a live GPU percentage next to the bar icon; keeps GPU sampling warm in the background."
+      },
+      {
+        "key": "showBarIcons",
+        "type": "boolean",
+        "label": "Show icons in bar",
+        "defaultValue": false,
+        "description": "Prefix each enabled bar metric with its own icon instead of a plain dot separator."
       }
     ]
   }

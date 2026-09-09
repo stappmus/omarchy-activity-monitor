@@ -110,6 +110,7 @@ Panel {
   readonly property bool showCpuInBar: booleanSetting("showCpuInBar", true)
   readonly property bool showMemoryInBar: booleanSetting("showMemoryInBar", true)
   readonly property bool showGpuInBar: booleanSetting("showGpuInBar", false)
+  readonly property bool showBarIcons: booleanSetting("showBarIcons", false)
   readonly property int barFieldCount: (showCpuInBar ? 1 : 0)
     + (showMemoryInBar ? 1 : 0) + (showGpuInBar ? 1 : 0)
 
@@ -230,18 +231,38 @@ Panel {
     return text.length < 4 ? " ".repeat(4 - text.length) + text : text
   }
 
+  // Per-metric glyphs, shared with the matching "Bar display" settings
+  // toggles so the same icon always means the same metric.
+  function barFieldIcon(kind) {
+    if (kind === "cpu") return "\uf2db"
+    if (kind === "memory") return "\uefc5"
+    if (kind === "gpu") return "\ue955"
+    return ""
+  }
+
+  function barFieldPrefix(kind) {
+    return root.showBarIcons ? (barFieldIcon(kind) + " ") : ""
+  }
+
+  function barSummarySeparator() {
+    return root.showBarIcons ? "  " : " · "
+  }
+
   function barCpuFieldText() {
-    return barFieldText(root.hasSnapshot ? percentText(root.metrics.cpu) : "…")
+    return barFieldPrefix("cpu")
+      + barFieldText(root.hasSnapshot ? percentText(root.metrics.cpu) : "…")
   }
 
   function barMemoryFieldText() {
-    return barFieldText(root.hasSnapshot ? percentText(root.metrics.memory) : "…")
+    return barFieldPrefix("memory")
+      + barFieldText(root.hasSnapshot ? percentText(root.metrics.memory) : "…")
   }
 
   function barGpuFieldText() {
-    if (root.gpuSnapshot.sample <= 0) return barFieldText("…")
+    var prefix = barFieldPrefix("gpu")
+    if (root.gpuSnapshot.sample <= 0) return prefix + barFieldText("…")
     var usage = root.primaryGpuUsage()
-    return barFieldText(usage < 0 ? "—" : percentText(usage))
+    return prefix + barFieldText(usage < 0 ? "—" : percentText(usage))
   }
 
   function barSummaryFields() {
@@ -254,13 +275,36 @@ Panel {
 
   function barSummaryText() {
     var fields = root.barSummaryFields()
-    return fields.length > 0 ? " " + fields.join(" · ") : ""
+    return fields.length > 0 ? " " + fields.join(root.barSummarySeparator()) : ""
   }
 
   function barWidestSummaryText() {
     var fields = []
-    for (var i = 0; i < root.barFieldCount; i++) fields.push("100%")
-    return fields.length > 0 ? " " + fields.join(" · ") : ""
+    if (root.showCpuInBar) fields.push(root.barFieldPrefix("cpu") + "100%")
+    if (root.showMemoryInBar) fields.push(root.barFieldPrefix("memory") + "100%")
+    if (root.showGpuInBar) fields.push(root.barFieldPrefix("gpu") + "100%")
+    return fields.length > 0 ? " " + fields.join(root.barSummarySeparator()) : ""
+  }
+
+  // Per-field icons already identify each metric, so the shared activity
+  // glyph is only needed as an anchor when it's the sole visual content:
+  // plain-number mode, or no metric is enabled at all.
+  function barLeadingIcon() {
+    return (root.showBarIcons && root.barFieldCount > 0) ? "" : "\uf201"
+  }
+
+  function barTextWithLeadingIcon(summary) {
+    var icon = root.barLeadingIcon()
+    if (icon === "" && summary.charAt(0) === " ") summary = summary.slice(1)
+    return icon + summary
+  }
+
+  function barButtonText() {
+    return root.barTextWithLeadingIcon(root.barSummaryText())
+  }
+
+  function barWidestButtonText() {
+    return root.barTextWithLeadingIcon(root.barWidestSummaryText())
   }
 
   function booleanSetting(name, fallback) {
@@ -312,7 +356,8 @@ Panel {
       processPowerEnabled: true,
       showCpuInBar: true,
       showMemoryInBar: true,
-      showGpuInBar: false
+      showGpuInBar: false,
+      showBarIcons: false
     })
   }
 
@@ -657,14 +702,14 @@ Panel {
     id: buttonTextMetrics
     font.family: root.bar ? root.bar.fontFamily : Style.font.family
     font.pixelSize: Style.font.caption
-    text: "\uf201" + root.barWidestSummaryText()
+    text: root.barWidestButtonText()
   }
 
   WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "\uf201" + root.barSummaryText()
+    text: root.barButtonText()
     fontSize: Style.font.caption
     horizontalMargin: 6
     fixedWidth: buttonTextMetrics.width + horizontalMargin * 2
@@ -1122,6 +1167,19 @@ Panel {
               accent: root.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onClicked: root.persistSettings({ showGpuInBar: !root.showGpuInBar })
+            }
+
+            Toggle {
+              width: (barDisplayGrid.width
+                - barDisplayGrid.columnSpacing * (barDisplayGrid.columns - 1))
+                / barDisplayGrid.columns
+              label: "Show icons"
+              description: "Prefix each enabled metric with its own icon instead of a plain dot separator."
+              checked: root.showBarIcons
+              foreground: root.foreground
+              accent: root.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onClicked: root.persistSettings({ showBarIcons: !root.showBarIcons })
             }
           }
         }

@@ -435,7 +435,7 @@ const settingKeys = manifest.barWidget.schema.map(entry => entry.key)
 assertDeepEqual(
   settingKeys,
   ['samplingSpeed', 'historySamples', 'temperatureUnit', 'showFrequencies', 'openExpanded', 'processPowerEnabled',
-    'showCpuInBar', 'showMemoryInBar', 'showGpuInBar'],
+    'showCpuInBar', 'showMemoryInBar', 'showGpuInBar', 'showBarIcons'],
   'activity publishes the same focused preferences offered by its settings menu'
 )
 JS
