@@ -434,7 +434,8 @@ const manifest = requireFromRoot('manifest.json')
 const settingKeys = manifest.barWidget.schema.map(entry => entry.key)
 assertDeepEqual(
   settingKeys,
-  ['samplingSpeed', 'historySamples', 'temperatureUnit', 'showFrequencies', 'openExpanded', 'processPowerEnabled'],
+  ['samplingSpeed', 'historySamples', 'temperatureUnit', 'showFrequencies', 'openExpanded', 'processPowerEnabled',
+    'showCpuInBar', 'showMemoryInBar', 'showGpuInBar'],
   'activity publishes the same focused preferences offered by its settings menu'
 )
 JS
@@ -716,10 +717,11 @@ fi
 if grep -Eq 'activity-package-power|refreshPackagePower|packagePowerProc' "$controller_file"; then
   fail "activity panel still polls package power"
 fi
-grep -Fq 'if (expanded) sendStatsRequest("gpus")' "$controller_file" &&
+grep -Fq 'if (gpuSamplingActive) sendStatsRequest("gpus")' "$controller_file" &&
+  grep -Fq 'readonly property bool gpuSamplingActive: expanded || gpuBarEnabled' "$controller_file" &&
   grep -Fq '_gpuDue = 0' "$controller_file" &&
   grep -Fq 'resetGpuMeasurement()' "$controller_file" ||
-  fail "activity panel samples GPU details while the advanced view is collapsed"
+  fail "activity panel samples GPU details while the advanced view is collapsed and the bar option is off"
 grep -Fq '_metrics = Model.baselineMetrics(next, metrics)' "$controller_file" &&
   grep -Fq 'function resetSessionSampling()' "$controller_file" &&
   grep -Fq 'if (_gpus.length === 0)' "$controller_file" ||

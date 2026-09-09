@@ -107,6 +107,11 @@ Panel {
   readonly property bool showFrequencies: booleanSetting("showFrequencies", true)
   readonly property bool openExpandedByDefault: booleanSetting("openExpanded", false)
   readonly property bool powerEstimatesEnabled: booleanSetting("processPowerEnabled", true)
+  readonly property bool showCpuInBar: booleanSetting("showCpuInBar", true)
+  readonly property bool showMemoryInBar: booleanSetting("showMemoryInBar", true)
+  readonly property bool showGpuInBar: booleanSetting("showGpuInBar", false)
+  readonly property int barFieldCount: (showCpuInBar ? 1 : 0)
+    + (showMemoryInBar ? 1 : 0) + (showGpuInBar ? 1 : 0)
 
   function refresh() {
     activity.refresh()
@@ -218,6 +223,46 @@ Panel {
     return Math.round(Number(value) || 0) + "%"
   }
 
+  // Right-pads bar-widget fields to a constant character width so the icon
+  // and neighboring bar widgets don't shift as digit counts change. Relies
+  // on the bar using a monospace font.
+  function barFieldText(text) {
+    return text.length < 4 ? " ".repeat(4 - text.length) + text : text
+  }
+
+  function barCpuFieldText() {
+    return barFieldText(root.hasSnapshot ? percentText(root.metrics.cpu) : "…")
+  }
+
+  function barMemoryFieldText() {
+    return barFieldText(root.hasSnapshot ? percentText(root.metrics.memory) : "…")
+  }
+
+  function barGpuFieldText() {
+    if (root.gpuSnapshot.sample <= 0) return barFieldText("…")
+    var usage = root.primaryGpuUsage()
+    return barFieldText(usage < 0 ? "—" : percentText(usage))
+  }
+
+  function barSummaryFields() {
+    var fields = []
+    if (root.showCpuInBar) fields.push(root.barCpuFieldText())
+    if (root.showMemoryInBar) fields.push(root.barMemoryFieldText())
+    if (root.showGpuInBar) fields.push(root.barGpuFieldText())
+    return fields
+  }
+
+  function barSummaryText() {
+    var fields = root.barSummaryFields()
+    return fields.length > 0 ? " " + fields.join(" · ") : ""
+  }
+
+  function barWidestSummaryText() {
+    var fields = []
+    for (var i = 0; i < root.barFieldCount; i++) fields.push("100%")
+    return fields.length > 0 ? " " + fields.join(" · ") : ""
+  }
+
   function booleanSetting(name, fallback) {
     var value = setting(name, fallback)
     if (typeof value === "boolean") return value
@@ -264,7 +309,10 @@ Panel {
       temperatureUnit: "Celsius",
       showFrequencies: true,
       openExpanded: false,
-      processPowerEnabled: true
+      processPowerEnabled: true,
+      showCpuInBar: true,
+      showMemoryInBar: true,
+      showGpuInBar: false
     })
   }
 
@@ -585,8 +633,9 @@ Panel {
   ActivityController {
     id: activity
     settings: root.settings
-    active: root.opened
+    active: root.opened || root.barFieldCount > 0
     expanded: root.expanded
+    gpuBarEnabled: root.showGpuInBar
     processPowerEnabled: root.powerEstimatesEnabled
   }
 
@@ -604,11 +653,21 @@ Panel {
     referenceItem: root.processViewport
   }
 
-  BarIconButton {
+  TextMetrics {
+    id: buttonTextMetrics
+    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+    font.pixelSize: Style.font.caption
+    text: "\uf201" + root.barWidestSummaryText()
+  }
+
+  WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "\uf201"
+    text: "\uf201" + root.barSummaryText()
+    fontSize: Style.font.caption
+    horizontalMargin: 6
+    fixedWidth: buttonTextMetrics.width + horizontalMargin * 2
     tooltipText: "Activity"
     onPressed: function(buttonCode) { root.toggle() }
   }
@@ -988,6 +1047,81 @@ Panel {
               accent: root.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onClicked: root.persistSettings({ processPowerEnabled: !root.powerEstimatesEnabled })
+            }
+          }
+        }
+      }
+
+      DetailSurface {
+        width: parent.width
+        height: barDisplayBody.implicitHeight + Style.spacing.xl * 2
+
+        Column {
+          id: barDisplayBody
+          x: Style.spacing.xl
+          y: Style.spacing.xl
+          width: Math.max(1, parent.width - Style.spacing.xl * 2)
+          spacing: Style.spacing.md
+
+          PanelSectionHeader {
+            text: "Bar display"
+            foreground: root.foreground
+            fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+          }
+
+          Text {
+            width: parent.width
+            text: "Choose which live metrics appear next to the icon in your Omarchy bar. Enabling GPU keeps GPU sampling warm in the background even while this panel is collapsed."
+            color: root.dim
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
+          Grid {
+            id: barDisplayGrid
+            width: parent.width
+            columns: width >= Style.space(500) ? 2 : 1
+            columnSpacing: Style.spacing.xl
+            rowSpacing: Style.spacing.md
+
+            Toggle {
+              width: (barDisplayGrid.width
+                - barDisplayGrid.columnSpacing * (barDisplayGrid.columns - 1))
+                / barDisplayGrid.columns
+              label: "\uf2db  Show CPU"
+              description: "Add a live CPU percentage next to the bar icon."
+              checked: root.showCpuInBar
+              foreground: root.foreground
+              accent: root.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onClicked: root.persistSettings({ showCpuInBar: !root.showCpuInBar })
+            }
+
+            Toggle {
+              width: (barDisplayGrid.width
+                - barDisplayGrid.columnSpacing * (barDisplayGrid.columns - 1))
+                / barDisplayGrid.columns
+              label: "\uefc5  Show memory"
+              description: "Add a live memory percentage next to the bar icon."
+              checked: root.showMemoryInBar
+              foreground: root.foreground
+              accent: root.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onClicked: root.persistSettings({ showMemoryInBar: !root.showMemoryInBar })
+            }
+
+            Toggle {
+              width: (barDisplayGrid.width
+                - barDisplayGrid.columnSpacing * (barDisplayGrid.columns - 1))
+                / barDisplayGrid.columns
+              label: "\ue955  Show GPU"
+              description: "Add a live GPU percentage next to the bar icon."
+              checked: root.showGpuInBar
+              foreground: root.foreground
+              accent: root.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onClicked: root.persistSettings({ showGpuInBar: !root.showGpuInBar })
             }
           }
         }

@@ -29,7 +29,10 @@
       "temperatureUnit": "Celsius",
       "showFrequencies": true,
       "openExpanded": false,
-      "processPowerEnabled": true
+      "processPowerEnabled": true,
+      "showCpuInBar": true,
+      "showMemoryInBar": true,
+      "showGpuInBar": false
     },
     "schema": [
       {
@@ -74,6 +77,27 @@
         "label": "Process power estimates",
         "defaultValue": true,
         "description": "Disable to skip CPU package-energy sampling in the detailed view."
+      },
+      {
+        "key": "showCpuInBar",
+        "type": "boolean",
+        "label": "Show CPU in bar",
+        "defaultValue": true,
+        "description": "Add a live CPU percentage next to the bar icon."
+      },
+      {
+        "key": "showMemoryInBar",
+        "type": "boolean",
+        "label": "Show memory in bar",
+        "defaultValue": true,
+        "description": "Add a live memory percentage next to the bar icon."
+      },
+      {
+        "key": "showGpuInBar",
+        "type": "boolean",
+        "label": "Show GPU in bar",
+        "defaultValue": false,
+        "description": "Add a live GPU percentage next to the bar icon; keeps GPU sampling warm in the background."
       }
     ]
   }
