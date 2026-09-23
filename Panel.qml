@@ -313,7 +313,9 @@ Panel {
 
   function cpuCardLabel() {
     var frequency = frequencyText(snapshot.cpuFrequencyMHz, "MHz")
-    return frequency ? "CPU · " + frequency : "CPU"
+    var name = String(snapshot.cpuName || "")
+    var title = name ? name : "CPU"
+    return frequency ? title + " · " + frequency : title
   }
 
   function memoryCardLabel() {
@@ -393,8 +395,12 @@ Panel {
     var adapters = Array.isArray(gpus) ? gpus : []
     if (adapters.length === 0)
       return gpuSnapshot.sample <= 0 ? "Detecting" : "Not detected"
-    if (adapters.length === 1)
-      return gpuMemoryLabel(adapters[0]) + " " + gpuMemoryText(adapters[0])
+    if (adapters.length === 1) {
+      var memory = gpuMemoryText(adapters[0])
+      if (memory === "Unavailable" && String(adapters[0].vendor) === "Apple")
+        return "Unified memory"
+      return gpuMemoryLabel(adapters[0]) + " " + memory
+    }
     var parts = []
     for (var i = 0; i < Math.min(2, adapters.length); i++)
       parts.push(compactGpuName(adapters[i]) + " " + gpuUsageAndClockText(adapters[i]))

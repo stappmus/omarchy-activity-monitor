@@ -25,6 +25,11 @@ const first = activity.parseSnapshot([
 
 assertEqual(first.sample, 1000, 'activity parses the monotonic resource sample')
 assertEqual(first.cpuFrequencyMHz, 2400, 'activity parses the average current CPU clock')
+assertEqual(
+  activity.parseSnapshot('schema\tactivity-resources\t1\ncpu-name\tApple M2 Max\n').cpuName,
+  'Apple M2 Max',
+  'activity keeps the processor name on the resource snapshot'
+)
 assertEqual(first.memorySpeedMTs, 6400, 'activity parses the configured DDR transfer rate')
 assertEqual(first.cores.length, 2, 'activity parses per-core counters')
 assertEqual(first.memory.cached, 125 * 1024, 'activity parses reclaimable cache')
@@ -645,6 +650,8 @@ grep -Fq 'return "Shared"' "$panel_file" ||
   fail "activity panel does not distinguish integrated shared GPU memory"
 grep -Fq 'return "VRAM"' "$panel_file" ||
   fail "activity panel does not label dedicated GPU memory"
+grep -Fq 'return "Unified memory"' "$panel_file" ||
+  fail "activity panel does not label Apple unified memory when the GPU reports none"
 grep -Fq 'function storageCardValue()' "$panel_file" &&
   grep -Fq 'function storageCardDetail()' "$panel_file" &&
   grep -Fq '" free"' "$panel_file" ||
@@ -752,6 +759,8 @@ grep -Fq 'Model.formatBytes(snapshot.memory.cached)' "$panel_file" ||
   fail "activity panel does not place RAM speed in both card headings"
 [[ $(grep -Fc 'label: root.cpuCardLabel()' "$panel_file") -eq 2 ]] ||
   fail "activity panel does not place CPU frequency in both card headings"
+grep -Fq 'var name = String(snapshot.cpuName || "")' "$panel_file" ||
+  fail "activity CPU card does not use the processor name"
 grep -Fq 'function memoryBreakdownText()' "$panel_file" &&
   grep -Fq 'if (usedUnit && usedUnit === cacheUnit)' "$panel_file" &&
   grep -Fq '" · cache " + cacheText' "$panel_file" ||

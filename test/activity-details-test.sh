@@ -564,6 +564,111 @@ grep -Fq $'engine\t0000:00:02.0\t79\trcs\t25\t1000\t1\tcycles' \
   fail "activity GPU reader did not discover a new client after its cache interval"
 pass "activity GPU reader refreshes counters without rescanning process FDs every sample"
 
+apple_sys="$fixture_root/apple-sys"
+apple_proc="$fixture_root/apple-proc"
+apple_gpu="$fixture_root/apple-gpu"
+apple_display="$fixture_root/apple-display"
+apple_drivers="$fixture_root/apple-drivers"
+mkdir -p \
+  "$apple_sys/class/drm/card0" \
+  "$apple_sys/class/drm/card1" \
+  "$apple_gpu" \
+  "$apple_display" \
+  "$apple_drivers/asahi" \
+  "$apple_drivers/apple-drm" \
+  "$apple_proc"
+ln -s "$apple_gpu" "$apple_sys/class/drm/card0/device"
+ln -s "$apple_display" "$apple_sys/class/drm/card1/device"
+ln -s "$apple_drivers/asahi" "$apple_gpu/driver"
+ln -s "$apple_drivers/apple-drm" "$apple_display/driver"
+ln -s "$apple_gpu" "$apple_gpu/supplier:platform:406408000.mbox"
+printf '%s\n' \
+  'DRIVER=asahi' \
+  'OF_COMPATIBLE_0=apple,agx-t6021' \
+  'OF_COMPATIBLE_1=apple,agx-g14x' \
+  >"$apple_gpu/uevent"
+printf '%s\n' \
+  'DRIVER=apple-drm' \
+  'OF_COMPATIBLE_0=apple,display-subsystem' \
+  >"$apple_display/uevent"
+printf '321.50 100.00\n' >"$apple_proc/uptime"
+printf '%s\n' \
+  '           CPU0       CPU1' \
+  ' 61:       1000       1000     AIC2 66682 Level     406408000.mbox-recv' \
+  >"$apple_proc/interrupts"
+
+apple_gpu_snapshot=$(
+  OMARCHY_SYSTEM_STATS_PROC_PATH="$apple_proc" \
+    OMARCHY_SYSTEM_STATS_SYS_PATH="$apple_sys" \
+    "$ROOT/activity-stats" --activity-gpus
+)
+grep -Fxq $'gpu\tcard0\tApple\tasahi\tApple M2 Max\t-1\t-1\t-1\tunknown\t-1' \
+  <<<"$apple_gpu_snapshot" ||
+  fail "activity GPU output names an Apple AGX adapter from its device tree" "$apple_gpu_snapshot"
+[[ $(grep -c $'^gpu\t' <<<"$apple_gpu_snapshot") -eq 1 ]] ||
+  fail "activity GPU output includes the Apple display controller" "$apple_gpu_snapshot"
+pass "activity GPU output names Apple AGX and skips the display controller"
+
+printf '%s\n' \
+  'DRIVER=asahi' \
+  'OF_COMPATIBLE_0=apple,agx-t8122' \
+  'OF_COMPATIBLE_1=apple,agx-g15g' \
+  >"$apple_gpu/uevent"
+apple_generation_snapshot=$(
+  OMARCHY_SYSTEM_STATS_PROC_PATH="$apple_proc" \
+    OMARCHY_SYSTEM_STATS_SYS_PATH="$apple_sys" \
+    "$ROOT/activity-stats" --activity-gpus
+)
+grep -Fxq $'gpu\tcard0\tApple\tasahi\tApple G15g\t-1\t-1\t-1\tunknown\t-1' \
+  <<<"$apple_generation_snapshot" ||
+  fail "activity GPU output falls back to the Apple G-series compatible" "$apple_generation_snapshot"
+pass "activity GPU output falls back to the Apple G-series compatible"
+
+printf '%s\n' \
+  'DRIVER=asahi' \
+  'OF_COMPATIBLE_0=apple,agx-t6021' \
+  'OF_COMPATIBLE_1=apple,agx-g14x' \
+  >"$apple_gpu/uevent"
+coproc APPLE_GPU_READER {
+  exec env \
+    OMARCHY_SYSTEM_STATS_PROC_PATH="$apple_proc" \
+    OMARCHY_SYSTEM_STATS_SYS_PATH="$apple_sys" \
+    "$ROOT/activity-sampler" --activity-reader
+}
+apple_reader_pid=$APPLE_GPU_READER_PID
+apple_reader_input=${APPLE_GPU_READER[1]}
+apple_reader_output=${APPLE_GPU_READER[0]}
+printf 'gpus\n' >&"$apple_reader_input"
+read_gpu_frame "$apple_reader_output" apple_first_frame ||
+  fail "activity Apple GPU reader stopped before its first frame"
+grep -Fxq $'gpu\tcard0\tApple\tasahi\tApple M2 Max\t-1\t-1\t-1\tunknown\t-1' \
+  <<<"$apple_first_frame" ||
+  fail "activity Apple GPU utilization is reported before a mailbox baseline" "$apple_first_frame"
+
+sleep 0.4
+printf 'gpus\n' >&"$apple_reader_input"
+read_gpu_frame "$apple_reader_output" apple_idle_frame ||
+  fail "activity Apple GPU reader stopped during its idle frame"
+grep -Fxq $'gpu\tcard0\tApple\tasahi\tApple M2 Max\t0\t-1\t-1\tunknown\t-1' \
+  <<<"$apple_idle_frame" ||
+  fail "activity Apple GPU utilization stays idle when the mailbox is quiet" "$apple_idle_frame"
+
+printf '%s\n' \
+  '           CPU0       CPU1' \
+  ' 61:      21000      21000     AIC2 66682 Level     406408000.mbox-recv' \
+  >"$apple_proc/interrupts"
+sleep 0.4
+printf 'gpus\n' >&"$apple_reader_input"
+read_gpu_frame "$apple_reader_output" apple_busy_frame ||
+  fail "activity Apple GPU reader stopped during its busy frame"
+exec {apple_reader_input}>&-
+wait "$apple_reader_pid"
+apple_busy_line=$(grep $'^gpu\t' <<<"$apple_busy_frame" || true)
+IFS=$'\t' read -r _ _ _ _ _ apple_busy_util _ <<<"$apple_busy_line"
+awk -v value="$apple_busy_util" 'BEGIN { exit !(value+0 >= 50) }' ||
+  fail "activity Apple GPU utilization rises with command completions" "$apple_busy_frame"
+pass "activity Apple GPU utilization follows the command mailbox"
+
 read_thermal_frame() {
   local output_fd="$1"
   local result_name="$2"
@@ -641,6 +746,45 @@ resource_without_route=$(
 grep -Fxq $'schema\tactivity-resources\t1' <<<"$resource_without_route" ||
   fail "activity resources fail when optional route metadata is absent"
 pass "activity resources tolerate missing optional procfs inputs"
+
+mkdir -p "$proc_path/device-tree"
+printf 'apple,j414c\0apple,t6021\0apple,arm-platform\0' >"$proc_path/device-tree/compatible"
+printf 'Apple MacBook Pro (14-inch, M2 Max, 2023)\0' >"$proc_path/device-tree/model"
+apple_cpu_snapshot=$(
+  OMARCHY_SYSTEM_STATS_PROC_PATH="$proc_path" \
+    OMARCHY_SYSTEM_STATS_SYS_PATH="$sys_path" \
+    "$ROOT/activity-stats" --activity-resources
+)
+grep -Fxq $'cpu-name\tApple M2 Max' <<<"$apple_cpu_snapshot" ||
+  fail "activity names an Apple SoC from its device tree" "$apple_cpu_snapshot"
+printf 'apple,t8122\0' >"$proc_path/device-tree/compatible"
+printf 'Apple MacBook Pro (14-inch, M3, 2024)\0' >"$proc_path/device-tree/model"
+apple_model_snapshot=$(
+  OMARCHY_SYSTEM_STATS_PROC_PATH="$proc_path" \
+    OMARCHY_SYSTEM_STATS_SYS_PATH="$sys_path" \
+    "$ROOT/activity-stats" --activity-resources
+)
+grep -Fxq $'cpu-name\tApple M3' <<<"$apple_model_snapshot" ||
+  fail "activity names an unlisted Apple SoC from the device-tree model" "$apple_model_snapshot"
+rm -rf -- "$proc_path/device-tree"
+printf 'model name\t: Intel(R) Core(TM) i7-12700K CPU @ 3.60GHz\n' >"$proc_path/cpuinfo"
+intel_cpu_snapshot=$(
+  OMARCHY_SYSTEM_STATS_PROC_PATH="$proc_path" \
+    OMARCHY_SYSTEM_STATS_SYS_PATH="$sys_path" \
+    "$ROOT/activity-stats" --activity-resources
+)
+grep -Fxq $'cpu-name\tCore i7-12700K' <<<"$intel_cpu_snapshot" ||
+  fail "activity names an Intel processor from cpuinfo" "$intel_cpu_snapshot"
+printf 'model name\t: ARMv8 Processor rev 0 (v8l)\n' >"$proc_path/cpuinfo"
+generic_cpu_snapshot=$(
+  OMARCHY_SYSTEM_STATS_PROC_PATH="$proc_path" \
+    OMARCHY_SYSTEM_STATS_SYS_PATH="$sys_path" \
+    "$ROOT/activity-stats" --activity-resources
+)
+if grep -q $'^cpu-name\t' <<<"$generic_cpu_snapshot"; then
+  fail "activity presents a generic ARM model string as the processor name" "$generic_cpu_snapshot"
+fi
+pass "activity names the processor when the platform identifies it"
 
 process_snapshot=$(
   OMARCHY_SYSTEM_STATS_PROC_PATH="$proc_path" \

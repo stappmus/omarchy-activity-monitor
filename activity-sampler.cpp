@@ -319,6 +319,173 @@ std::uint64_t SystemValue(int name, std::uint64_t fallback) {
   return value > 0 ? static_cast<std::uint64_t>(value) : fallback;
 }
 
+std::string AppleSoCName(const std::string &chip) {
+  if (chip == "8103")
+    return "Apple M1";
+  if (chip == "6000")
+    return "Apple M1 Pro";
+  if (chip == "6001")
+    return "Apple M1 Max";
+  if (chip == "6002")
+    return "Apple M1 Ultra";
+  if (chip == "8112")
+    return "Apple M2";
+  if (chip == "6020")
+    return "Apple M2 Pro";
+  if (chip == "6021")
+    return "Apple M2 Max";
+  if (chip == "6022")
+    return "Apple M2 Ultra";
+  return {};
+}
+
+std::string HexChip(const std::string &text, std::size_t at, std::size_t marker) {
+  std::string chip;
+  for (std::size_t index = at + marker;
+       index < text.size() &&
+       std::isxdigit(static_cast<unsigned char>(text[index]));
+       ++index)
+    chip.push_back(text[index]);
+  return chip;
+}
+
+std::string AppleNameFromModel(const std::string &model) {
+  for (std::size_t index = 0; index < model.size(); ++index) {
+    if (model[index] != 'M' && model[index] != 'm')
+      continue;
+    if (index > 0 &&
+        std::isalpha(static_cast<unsigned char>(model[index - 1])) != 0)
+      continue;
+    if (index + 1 >= model.size() ||
+        std::isdigit(static_cast<unsigned char>(model[index + 1])) == 0)
+      continue;
+    std::string generation(1, model[index + 1]);
+    std::size_t next = index + 2;
+    while (next < model.size() &&
+           std::isdigit(static_cast<unsigned char>(model[next])) != 0) {
+      generation.push_back(model[next]);
+      ++next;
+    }
+    std::string tier;
+    if (next < model.size() && model[next] == ' ') {
+      const auto rest = model.substr(next + 1);
+      if (StartsWith(rest, "Ultra"))
+        tier = " Ultra";
+      else if (StartsWith(rest, "Max"))
+        tier = " Max";
+      else if (StartsWith(rest, "Pro"))
+        tier = " Pro";
+    }
+    return "Apple M" + generation + tier;
+  }
+  return {};
+}
+
+std::string AppleCpuName(const std::string &compatible, const std::string &model) {
+  const std::string marker = "apple,t";
+  std::size_t pos = 0;
+  while ((pos = compatible.find(marker, pos)) != std::string::npos) {
+    if (pos > 0 && compatible[pos - 1] != '\0') {
+      pos += marker.size();
+      continue;
+    }
+    const auto chip = HexChip(compatible, pos, marker.size());
+    const auto end = pos + marker.size() + chip.size();
+    if (chip.empty() || (end < compatible.size() && compatible[end] != '\0')) {
+      pos = std::max(end, pos + marker.size());
+      continue;
+    }
+    const auto name = AppleSoCName(chip);
+    if (!name.empty())
+      return name;
+    pos = end;
+  }
+  if (compatible.find("apple,") != std::string::npos || StartsWith(model, "Apple"))
+    return AppleNameFromModel(model);
+  return {};
+}
+
+std::string WithoutToken(std::string value, const std::string &token) {
+  for (auto at = value.find(token); at != std::string::npos; at = value.find(token, at))
+    value.erase(at, token.size());
+  return value;
+}
+
+std::string CollapseSpaces(std::string value) {
+  std::string collapsed;
+  bool pending_space = false;
+  for (const char character : value) {
+    if (character == ' ' || character == '\t') {
+      pending_space = !collapsed.empty();
+      continue;
+    }
+    if (pending_space)
+      collapsed.push_back(' ');
+    pending_space = false;
+    collapsed.push_back(character);
+  }
+  return collapsed;
+}
+
+std::string CompactCpuModel(std::string model) {
+  model = WithoutToken(std::move(model), "(R)");
+  model = WithoutToken(std::move(model), "(TM)");
+  model = WithoutToken(std::move(model), "(tm)");
+  for (const char *cut : {" CPU @", " CPU", " @"}) {
+    const auto at = model.find(cut);
+    if (at != std::string::npos)
+      model.erase(at);
+  }
+  model = CollapseSpaces(Trim(std::move(model)));
+  const std::string processor = " Processor";
+  if (EndsWith(model, processor))
+    model.erase(model.size() - processor.size());
+  const auto cores = model.rfind("-Core");
+  if (cores != std::string::npos) {
+    auto start = cores;
+    while (start > 0 && std::isdigit(static_cast<unsigned char>(model[start - 1])) != 0)
+      --start;
+    if (start > 0 && model[start - 1] == ' ')
+      model.erase(start - 1);
+  }
+  if (StartsWith(model, "Intel "))
+    model.erase(0, 6);
+  return CollapseSpaces(Trim(std::move(model)));
+}
+
+bool GenericArmModel(const std::string &model) {
+  const auto lower = Lowercase(model);
+  return StartsWith(lower, "armv") || lower.find("aarch64") != std::string::npos;
+}
+
+std::string CpuModelName(const std::string &cpuinfo) {
+  std::istringstream stream(cpuinfo);
+  std::string line;
+  while (std::getline(stream, line)) {
+    if (!StartsWith(line, "model name"))
+      continue;
+    const auto colon = line.find(':');
+    if (colon == std::string::npos)
+      continue;
+    const auto model = CompactCpuModel(Trim(line.substr(colon + 1)));
+    if (!model.empty() && !GenericArmModel(model))
+      return model;
+  }
+  return {};
+}
+
+std::string ReadCpuName(const Paths &paths) {
+  const auto compatible =
+      ReadText(Join(paths.proc, "device-tree/compatible")).value_or("");
+  auto model = ReadText(Join(paths.proc, "device-tree/model")).value_or("");
+  model.erase(std::remove(model.begin(), model.end(), '\0'), model.end());
+  model = Trim(std::move(model));
+  const auto apple = AppleCpuName(compatible, model);
+  if (!apple.empty())
+    return apple;
+  return CpuModelName(ReadText(Join(paths.proc, "cpuinfo")).value_or(""));
+}
+
 class ResourceCollector {
 public:
   explicit ResourceCollector(Paths paths) : paths_(std::move(paths)) {}
@@ -327,6 +494,7 @@ public:
     DiscoverTopology();
     output << "schema\tactivity-resources\t1\n";
     output << "sample\t" << UptimeSample(paths_) << '\n';
+    EmitCpuName(output);
     EmitMemorySpeed(output);
     EmitCpu(output);
     EmitCpuTopology(output);
@@ -396,6 +564,7 @@ private:
   bool topology_discovered_ = false;
   bool memory_speed_checked_ = false;
   int memory_speed_mts_ = -1;
+  std::string cpu_name_;
   std::vector<std::string> cpu_frequency_paths_;
   std::vector<BlockDevice> block_devices_;
   std::vector<CpuTopo> cpu_topo_;
@@ -404,6 +573,7 @@ private:
     if (topology_discovered_)
       return;
     topology_discovered_ = true;
+    cpu_name_ = ReadCpuName(paths_);
 
     const std::string frequency_root =
         Join(paths_.sys, "devices/system/cpu/cpufreq");
@@ -746,6 +916,11 @@ private:
       output << "disk\t" << (dev ? *dev : "") << '\t' << device.name << '\t'
              << fields[2] << '\t' << fields[6] << '\n';
     }
+  }
+
+  void EmitCpuName(std::ostream &output) const {
+    if (!cpu_name_.empty())
+      output << "cpu-name\t" << Sanitize(cpu_name_) << '\n';
   }
 
   void EmitCpuFrequency(std::ostream &output) const {
@@ -1354,12 +1529,70 @@ struct GpuAdapter {
   std::string name;
   std::string card_path;
   std::string device_path;
+  // Apple AGX completion interrupt, for example "406408000.mbox-recv".
+  std::string command_irq;
   double utilization = -1;
   std::int64_t memory_used = -1;
   std::int64_t memory_total = -1;
   std::string memory_kind = "unknown";
   double frequency_mhz = -1;
 };
+
+std::string AppleGpuName(const std::string &uevent) {
+  const std::string marker = "apple,agx-t";
+  const auto at = uevent.find(marker);
+  if (at != std::string::npos) {
+    const auto name = AppleSoCName(HexChip(uevent, at, marker.size()));
+    if (!name.empty())
+      return name;
+  }
+  const auto generation = uevent.find("apple,agx-g");
+  if (generation != std::string::npos && generation + 12 < uevent.size())
+    return "Apple G" + uevent.substr(generation + 11, 3);
+  return "Apple GPU";
+}
+
+std::string AppleCommandInterrupt(const std::string &device_path) {
+  for (const auto &name : DirectoryNames(device_path)) {
+    const std::string prefix = "supplier:platform:";
+    if (!StartsWith(name, prefix) || name.find(".mbox") == std::string::npos)
+      continue;
+    const auto colon = name.rfind(':');
+    if (colon == std::string::npos || colon + 1 >= name.size())
+      continue;
+    return name.substr(colon + 1) + "-recv";
+  }
+  return {};
+}
+
+std::optional<std::uint64_t> InterruptCount(const std::string &proc,
+                                           const std::string &token) {
+  std::ifstream stream(Join(proc, "interrupts"));
+  if (!stream || token.empty())
+    return std::nullopt;
+  std::uint64_t total = 0;
+  bool found = false;
+  std::string line;
+  while (std::getline(stream, line)) {
+    if (line.find(token) == std::string::npos)
+      continue;
+    found = true;
+    std::stringstream fields(line);
+    std::string field;
+    while (fields >> field) {
+      while (!field.empty() && field.back() == ':')
+        field.pop_back();
+      if (!field.empty() &&
+          std::all_of(field.begin(), field.end(), [](unsigned char character) {
+            return std::isdigit(character) != 0;
+          }))
+        total += ParseUnsigned(field).value_or(0);
+    }
+  }
+  if (!found)
+    return std::nullopt;
+  return total;
+}
 
 struct NvidiaReading {
   std::string id;
@@ -1643,8 +1876,16 @@ private:
     EngineValue value;
   };
 
+  struct CommandSample {
+    std::uint64_t interrupts = 0;
+    Clock::time_point when{};
+    bool valid = false;
+    double baseline_hz = -1;
+  };
+
   Paths paths_;
   NvidiaProvider nvidia_;
+  std::unordered_map<std::string, CommandSample> command_samples_;
   bool adapters_discovered_ = false;
   bool nvidia_present_ = false;
   std::vector<GpuAdapter> adapters_;
@@ -1697,7 +1938,15 @@ private:
       gpu.vendor = GpuVendor(gpu.vendor_hex);
       const std::string driver_path = RealPath(Join(device_path, "driver"));
       gpu.driver = driver_path.empty() ? "unknown" : BaseName(driver_path);
+      // The Apple display controller is a DRM device, not a GPU.
+      if (gpu.driver == "apple-drm")
+        continue;
       gpu.name = ReadLine(Join(device_path, "product_name")).value_or("");
+      if (gpu.driver == "asahi") {
+        gpu.vendor = "Apple";
+        gpu.name = AppleGpuName(ReadText(Join(device_path, "uevent")).value_or(""));
+        gpu.command_irq = AppleCommandInterrupt(device_path);
+      }
       if (gpu.name.empty()) {
         const std::string device_hex =
             NormalizeHex(ReadLine(Join(device_path, "device")).value_or(""));
@@ -1774,7 +2023,44 @@ private:
         if (frequency)
           gpu.frequency_mhz = *frequency;
       }
+
+      // AGX does not publish engine busy time. Command completions arrive on
+      // the GPU mailbox; the quiet rate is the display refresh, and anything
+      // above that is additional GPU work.
+      if (!gpu.command_irq.empty() && gpu.utilization < 0)
+        gpu.utilization = AppleCommandUtilization(gpu.id, gpu.command_irq);
     }
+  }
+
+  double AppleCommandUtilization(const std::string &id, const std::string &irq) {
+    const auto count = InterruptCount(paths_.proc, irq);
+    if (!count)
+      return -1;
+    const auto now = Clock::now();
+    auto &previous = command_samples_[id];
+    double utilization = -1;
+    if (previous.valid && *count >= previous.interrupts) {
+      const double seconds =
+          std::chrono::duration<double>(now - previous.when).count();
+      if (seconds >= 0.2) {
+        const double rate =
+            static_cast<double>(*count - previous.interrupts) / seconds;
+        // A busy first sample must not become the idle floor. 60 Hz is only
+        // the initial cap; a quieter display lowers it.
+        if (previous.baseline_hz < 0)
+          previous.baseline_hz = std::min(rate, 60.0);
+        else if (rate < previous.baseline_hz)
+          previous.baseline_hz = rate;
+        const double extra = std::max(0.0, rate - previous.baseline_hz);
+        const double floor = std::max(previous.baseline_hz, 30.0);
+        utilization =
+            extra < 8.0 ? 0.0 : std::min(100.0, 100.0 * extra / (extra + floor));
+      }
+    }
+    previous.interrupts = *count;
+    previous.when = now;
+    previous.valid = true;
+    return utilization;
   }
 
   void ApplyNvidia() {
