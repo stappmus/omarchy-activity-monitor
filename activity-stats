@@ -6,6 +6,10 @@
 
 set -euo pipefail
 
-readonly helper="${BASH_SOURCE[0]%/*}/activity-sampler"
+readonly dir="${BASH_SOURCE[0]%/*}"
+
+# Prefer the prebuilt sampler for this CPU, then a local `make` build.
+helper="$dir/activity-sampler-$HOSTTYPE"
+[[ -x $helper ]] || helper="$dir/activity-sampler"
 [[ -x $helper ]] || exit 77
 exec "$helper" "$@"

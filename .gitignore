@@ -3,3 +3,4 @@
 /src/
 __pycache__/
 *.py[cod]
+/activity-sampler

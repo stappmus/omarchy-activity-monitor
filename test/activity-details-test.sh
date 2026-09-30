@@ -526,7 +526,7 @@ coproc GPU_READER {
     OMARCHY_SYSTEM_STATS_SYS_PATH="$sys_path" \
     OMARCHY_SYSTEM_STATS_NVIDIA_FIXTURE_PATH="$fixture_root/nvidia.tsv" \
     OMARCHY_SYSTEM_STATS_GPU_DISCOVERY_INTERVAL_MS=500 \
-    "$ROOT/activity-sampler" --activity-reader
+    "$ROOT/activity-stats" --activity-reader
 }
 gpu_reader_pid=$GPU_READER_PID
 gpu_reader_input=${GPU_READER[1]}
