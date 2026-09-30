@@ -511,9 +511,19 @@ grep -Eq '^sample[[:space:]][0-9]+([.][0-9]+)?[[:space:]][0-9]+[[:space:]][0-9]+
 grep -Eq '^process[[:space:]]' <<<"$process_snapshot" || fail "activity process collector emits process rows"
 pass "activity collector emits the process snapshot contract"
 
-[[ -x $ROOT/activity-sampler ]] || fail "native activity sampler is executable"
-[[ $("$ROOT/activity-sampler" --version) == "activity-sampler 2.1.1" ]] ||
+declare -A prebuilt_formats=([x86_64]='x86-64' [aarch64]='ARM aarch64')
+for arch in "${!prebuilt_formats[@]}"; do
+  prebuilt="$ROOT/activity-sampler-$arch"
+  [[ -x $prebuilt ]] || fail "prebuilt $arch activity sampler is executable"
+  file "$prebuilt" | grep -Fq "ELF 64-bit LSB pie executable, ${prebuilt_formats[$arch]}," ||
+    fail "prebuilt $arch activity sampler targets the wrong architecture"
+done
+[[ -x $ROOT/activity-sampler-$HOSTTYPE ]] ||
+  fail "no prebuilt activity sampler for this architecture" "$HOSTTYPE"
+[[ $("$ROOT/activity-sampler-$HOSTTYPE" --version) == "activity-sampler 2.1.1" ]] ||
   fail "native activity sampler reports the release protocol version"
+[[ $("$ROOT/activity-stats" --version) == "activity-sampler 2.1.1" ]] ||
+  fail "activity stats does not dispatch to the native sampler"
 [[ ! -e $ROOT/activity-process-stats ]] ||
   fail "legacy process helper remains beside the unified native sampler"
 pass "activity ships one native sampler instead of a process-helper chain"
@@ -679,8 +689,8 @@ if grep -Eq '^[[:space:]]*Process[[:space:]]*[{]' "$panel_file"; then
 fi
 grep -Fq 'command: [root.statsHelperPath, "--activity-reader"]' "$controller_file" ||
   fail "activity panel does not reuse a single unprivileged stats reader"
-grep -Fq 'String(Qt.resolvedUrl("activity-sampler"))' "$controller_file" ||
-  fail "activity panel does not launch the native sampler directly"
+grep -Fq 'String(Qt.resolvedUrl("activity-stats"))' "$controller_file" ||
+  fail "activity panel does not launch the sampler through its architecture dispatcher"
 grep -Fq '? [powerHelperPath]' "$controller_file" ||
   fail "activity panel does not use the persistent guarded CPU-energy reader"
 grep -Fq 'if (!active || !expanded || !processPowerEnabled' "$controller_file" &&

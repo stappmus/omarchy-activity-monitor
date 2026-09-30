@@ -18,7 +18,7 @@ Item {
   property bool processPowerEnabled: true
 
   readonly property string statsHelperPath: decodeURIComponent(
-    String(Qt.resolvedUrl("activity-sampler")).replace("file://", ""))
+    String(Qt.resolvedUrl("activity-stats")).replace("file://", ""))
   readonly property string powerHelperPath: decodeURIComponent(
     String(Qt.resolvedUrl("activity-power-reader")).replace("file://", ""))
 

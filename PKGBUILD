@@ -4,7 +4,7 @@ pkgname=omarchy-activity-monitor-power-helper
 pkgver=2.1.1
 pkgrel=1
 pkgdesc="Optional root-only native RAPL reader for the Omarchy Activity Monitor plugin"
-arch=('x86_64')
+arch=('x86_64' 'aarch64')
 url="https://github.com/stappmus/omarchy-activity-monitor"
 license=('MIT')
 depends=('gcc-libs' 'glibc' 'sudo')
@@ -18,10 +18,10 @@ source=(
   'LICENSE'
 )
 sha256sums=(
-  'bc8463aaac0e75dcea5c36597d5031ab28630d078a438ca87a9044a422ee026c'
-  '2ea69385047c3a1d1893378e2866a464cba7ae28040c0add8a3eaa80f94700a3'
+  '37645efc700fa02a6aa6b20ca3435701ca40354384342bf59387fb4ef93cc842'
+  '6bf0a9b76c12992f418bcffcea673c98d299c9445bae5b6cb83a3708eee5663c'
   'e248f015e89bc7f3df4714e7d1e0248c4ac9cc4b4642dda6aa428741b6c4f2ca'
-  'e02f364d97fd1c7ef95bb94d607c857ae5052961cdd0c8ac9b24ba2626ca1480'
+  '5361f1c5a85862e878d351c915f16fab3fecd967ed9afb48c9db55400e3112a6'
   'dd56ead2d3379b1d8298bbd1b905188b21894c46312ea4186b2afde9b03b3184'
 )
 
