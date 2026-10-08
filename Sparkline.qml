@@ -1,11 +1,12 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 Canvas {
   id: root
 
   property var values: []
-  property color lineColor: Color.accent
+  property color lineColor: Commons.Color.accent
   property color fillColor: Util.alpha(lineColor, 0.12)
   property real ceiling: 0
 
