@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
@@ -26,10 +27,10 @@ Panel {
   property Item searchField: null
   property var processViewport: null
 
-  readonly property color foreground: Color.popups.text
-  readonly property color accent: Color.accent
-  readonly property color urgent: Color.urgent
-  readonly property color dim: Color.muted
+  readonly property color foreground: Commons.Color.popups.text
+  readonly property color accent: Commons.Color.accent
+  readonly property color urgent: Commons.Color.urgent
+  readonly property color dim: Commons.Color.muted
   readonly property var snapshot: activity.snapshot
   readonly property var storageSnapshot: activity.storageSnapshot
   readonly property var gpuSnapshot: activity.gpuSnapshot
@@ -712,7 +713,7 @@ Panel {
           ? "Do you want to close " + processActions.pendingAction.name + "?"
           : ""
         confirmText: "Close"
-        background: Color.popups.background
+        background: Commons.Color.popups.background
         foreground: root.foreground
         selectedText: root.accent
         fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
