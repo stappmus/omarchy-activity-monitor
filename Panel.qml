@@ -637,18 +637,29 @@ Panel {
   // The graph rides inside the bar's own button rather than a bare MouseArea:
   // ModuleSlot overlays every widget with its drag-reorder pointer and only
   // dispatches presses to registered click targets, so a plain MouseArea would
-  // never see a click. iconComponent is the supported way in, and it brings the
-  // tooltip and hover handling with it.
+  // never see a click. Keeping the button also keeps its tooltip and hover
+  // handling.
   BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "\uf201"
-    iconComponent: root.barGraphEnabled ? barGraphComponent : null
+    // Omarchy 4.5 scales any iconComponent down to Style.bar.iconSize (12px on
+    // its longest side), which squashes the graph. Draw the graph over the
+    // button ourselves and blank the glyph instead.
+    text: root.barGraphEnabled ? "" : "\uf201"
+    hasVisualContent: true
     slotSize: root.barGraphEnabled ? root.barGraphLength : Style.bar.iconSlot
-    opticalSize: root.barGraphEnabled ? root.barGraphLength : Style.bar.iconCanvas
     tooltipText: root.barGraphEnabled ? root.barGraphSummary : "Activity"
     onPressed: function(buttonCode) { root.toggle() }
+
+    Loader {
+      anchors.centerIn: parent
+      width: root.barGraphLength
+      height: parent.height
+      active: root.barGraphEnabled
+      sourceComponent: barGraphComponent
+      scale: button.pressScale
+    }
   }
 
   Component {
