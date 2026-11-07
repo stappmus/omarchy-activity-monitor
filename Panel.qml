@@ -13,6 +13,9 @@ Panel {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
+  // Bar orientation is lifted off the host the same way Ui/BarWidget does it.
+  readonly property bool vertical: bar ? bar.vertical : false
+
   property bool expanded: false
   property bool settingsOpen: false
   property bool settingsControlActive: false
@@ -104,6 +107,23 @@ Panel {
   readonly property int historySamplesSetting: Math.max(20, Math.min(240,
     Math.round(Number(setting("historySamples", 60)) || 60)))
   readonly property string temperatureUnitSetting: normalizedTemperatureUnit(setting("temperatureUnit", "Celsius"))
+  readonly property string barGraphSetting: normalizedBarGraph(setting("barGraph", "Off"))
+  readonly property bool barGraphEnabled: barGraphSetting !== "Off"
+  // 0 means "square": match the bar's thickness so the graph reads as a tile.
+  readonly property int barGraphLengthSetting: Math.max(0, Math.min(160,
+    Number(setting("barGraphLength", 0)) || 0))
+  // Square means "the footprint the icon just gave up", so the graph lines up
+  // with every other widget slot on the bar.
+  readonly property int barGraphLength: barGraphLengthSetting > 0
+    ? barGraphLengthSetting
+    : Style.bar.iconSlot
+  readonly property var barGraphValues: barGraphSetting === "Memory"
+    ? metrics.memoryHistory
+    : metrics.cpuHistory
+  readonly property real barGraphLatest: barGraphSetting === "Memory" ? metrics.memory : metrics.cpu
+  readonly property string barGraphSummary: "CPU " + percentText(metrics.cpu)
+    + "  ·  RAM " + percentText(metrics.memory)
+  readonly property color barGraphTone: barGraphLatest >= 90 ? root.urgent : root.accent
   readonly property bool showFrequencies: booleanSetting("showFrequencies", true)
   readonly property bool openExpandedByDefault: booleanSetting("openExpanded", false)
   readonly property bool powerEstimatesEnabled: booleanSetting("processPowerEnabled", true)
@@ -229,6 +249,13 @@ Panel {
     return value === undefined || value === null ? fallback : !!value
   }
 
+  function normalizedBarGraph(value) {
+    var normalized = String(value === undefined || value === null ? "" : value).trim().toLowerCase()
+    if (normalized === "cpu") return "CPU"
+    if (normalized === "memory" || normalized === "ram") return "Memory"
+    return "Off"
+  }
+
   function normalizedSamplingSpeed(value) {
     return Model.samplingProfile(value).name
   }
@@ -264,7 +291,9 @@ Panel {
       temperatureUnit: "Celsius",
       showFrequencies: true,
       openExpanded: false,
-      processPowerEnabled: true
+      processPowerEnabled: true,
+      barGraph: "Off",
+      barGraphLength: 0
     })
   }
 
@@ -586,6 +615,7 @@ Panel {
     id: activity
     settings: root.settings
     active: root.opened
+    background: root.barGraphEnabled
     expanded: root.expanded
     processPowerEnabled: root.powerEstimatesEnabled
   }
@@ -604,13 +634,63 @@ Panel {
     referenceItem: root.processViewport
   }
 
+  // The graph rides inside the bar's own button rather than a bare MouseArea:
+  // ModuleSlot overlays every widget with its drag-reorder pointer and only
+  // dispatches presses to registered click targets, so a plain MouseArea would
+  // never see a click. Keeping the button also keeps its tooltip and hover
+  // handling.
   BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "\uf201"
-    tooltipText: "Activity"
+    // Omarchy 4.5 scales any iconComponent down to Style.bar.iconSize (12px on
+    // its longest side), which squashes the graph. Draw the graph over the
+    // button ourselves and blank the glyph instead.
+    text: root.barGraphEnabled ? "" : "\uf201"
+    hasVisualContent: true
+    slotSize: root.barGraphEnabled ? root.barGraphLength : Style.bar.iconSlot
+    tooltipText: root.barGraphEnabled ? root.barGraphSummary : "Activity"
     onPressed: function(buttonCode) { root.toggle() }
+
+    Loader {
+      anchors.centerIn: parent
+      width: root.barGraphLength
+      height: parent.height
+      active: root.barGraphEnabled
+      sourceComponent: barGraphComponent
+      scale: button.pressScale
+    }
+  }
+
+  Component {
+    id: barGraphComponent
+
+    // The optical canvas is square at the graph's length; the trace keeps its
+    // own bounded height and centers, so a wide graph stays a bar-height strip.
+    Item {
+      Sparkline {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        height: Math.max(Style.space(10), Math.min(parent.height, Style.bar.iconCanvas))
+        values: root.barGraphValues
+        ceiling: 100
+        lineColor: root.barGraphTone
+        fillColor: Util.alpha(root.barGraphTone, 0.16)
+      }
+    }
+  }
+
+  // showTooltip takes a snapshot of the text, so a tooltip opened over the
+  // graph would otherwise freeze at the reading it had on entry.
+  HoverHandler { id: barHover }
+
+  Connections {
+    target: root
+    function onBarGraphSummaryChanged() {
+      if (barHover.hovered && root.bar && root.barGraphEnabled)
+        root.bar.showTooltip(button, root.barGraphSummary)
+    }
   }
 
   KeyboardPanel {
@@ -949,6 +1029,41 @@ Panel {
               accent: root.accent
               fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
               onChanged: function(next) { root.persistSettings({ temperatureUnit: next }) }
+            }
+
+            Dropdown {
+              width: (preferenceGrid.width
+                - preferenceGrid.columnSpacing * (preferenceGrid.columns - 1))
+                / preferenceGrid.columns
+              label: "Bar graph"
+              value: root.barGraphSetting
+              options: [
+                { value: "Off", label: "Off · panel only" },
+                { value: "CPU", label: "CPU · always sampling" },
+                { value: "Memory", label: "Memory · always sampling" }
+              ]
+              foreground: root.foreground
+              accent: root.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onChanged: function(next) { root.persistSettings({ barGraph: next }) }
+            }
+
+            Dropdown {
+              width: (preferenceGrid.width
+                - preferenceGrid.columnSpacing * (preferenceGrid.columns - 1))
+                / preferenceGrid.columns
+              label: "Bar graph width"
+              value: String(root.barGraphLengthSetting)
+              options: [
+                { value: "0", label: "Square · matches the bar" },
+                { value: "44", label: "Wide · 44 px" },
+                { value: "72", label: "Wider · 72 px" },
+                { value: "110", label: "Widest · 110 px" }
+              ]
+              foreground: root.foreground
+              accent: root.accent
+              fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+              onChanged: function(next) { root.persistSettings({ barGraphLength: Number(next) }) }
             }
 
             Toggle {

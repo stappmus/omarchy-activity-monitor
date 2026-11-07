@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "stappmus.activity-monitor",
   "name": "Activity Monitor",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "author": "Kristoffer Haugland",
   "license": "MIT",
   "description": "A calm, low-overhead glance at CPU, memory, GPU, storage, and processes — with a die that matches your chip",
@@ -29,14 +29,20 @@
       "temperatureUnit": "Celsius",
       "showFrequencies": true,
       "openExpanded": false,
-      "processPowerEnabled": true
+      "processPowerEnabled": true,
+      "barGraph": "Off",
+      "barGraphLength": 0
     },
     "schema": [
       {
         "key": "samplingSpeed",
         "type": "enum",
         "label": "Update speed",
-        "options": ["Efficient", "Balanced", "Fast"],
+        "options": [
+          "Efficient",
+          "Balanced",
+          "Fast"
+        ],
         "defaultValue": "Balanced",
         "description": "Efficient uses fewer samples; Fast makes the graphs react sooner."
       },
@@ -53,8 +59,33 @@
         "key": "temperatureUnit",
         "type": "enum",
         "label": "Temperature unit",
-        "options": ["Celsius", "Fahrenheit"],
+        "options": [
+          "Celsius",
+          "Fahrenheit"
+        ],
         "defaultValue": "Celsius"
+      },
+      {
+        "key": "barGraph",
+        "type": "enum",
+        "label": "Bar graph",
+        "options": [
+          "Off",
+          "CPU",
+          "Memory"
+        ],
+        "defaultValue": "Off",
+        "description": "Draw a live sparkline beside the bar icon. Off keeps sampling to while the panel is open."
+      },
+      {
+        "key": "barGraphLength",
+        "type": "integer",
+        "label": "Bar graph width",
+        "min": 0,
+        "max": 160,
+        "step": 2,
+        "defaultValue": 0,
+        "description": "Length of the bar graph along the bar, in pixels. 0 matches the bar thickness for a square graph."
       },
       {
         "key": "showFrequencies",
