@@ -331,6 +331,7 @@ public:
     EmitCpu(output);
     EmitCpuTopology(output);
     EmitMemory(output);
+    EmitPressure(output);
     EmitTasks(output);
     EmitNetwork(output);
     EmitDisks(output);
@@ -617,6 +618,27 @@ private:
       values[key] = value;
     }
     return values;
+  }
+
+  void EmitPressure(std::ostream &output) const {
+    for (const auto resource : {"memory", "io"}) {
+      std::ifstream stream(Join(Join(paths_.proc, "pressure"), resource));
+      std::string line;
+      while (std::getline(stream, line)) {
+        const auto fields = SplitWhitespace(line);
+        if (fields.empty() || fields.front() != "some")
+          continue;
+        for (const auto &field : fields) {
+          if (!StartsWith(field, "avg10="))
+            continue;
+          const auto percent = ParseDouble(field.substr(6));
+          if (percent && *percent >= 0 && *percent <= 100)
+            output << "pressure\t" << resource << '\t' << *percent << '\n';
+          break;
+        }
+        break;
+      }
+    }
   }
 
   void EmitMemory(std::ostream &output) const {
@@ -2049,7 +2071,7 @@ int Run(int argc, char **argv) {
   else if (mode == "--activity-storage")
     sampler.Collect("storage", std::cout);
   else if (mode == "--version")
-    std::cout << "activity-sampler 2.1.1\n";
+    std::cout << "activity-sampler 2.2.0\n";
   else {
     std::cerr << "Usage: activity-sampler "
                  "[--bar-widget|--activity-reader|--activity-resources|"

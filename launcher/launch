@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -eu
+
+plugin_dir=$(dirname "$(dirname "$(realpath "$0")")")
+runtime_dir="${XDG_RUNTIME_DIR:?}/stappmus.activity-monitor"
+config="$runtime_dir/shell.qml"
+
+bar_method=open
+window_method=focus
+if [[ ${1:-} == --close-app ]]; then
+  bar_method=searchApps
+  window_method=searchApps
+fi
+
+# Focus the existing window, including one on a different workspace.
+address=$(hyprctl clients -j | jq -r '
+  first(.[] | select(.class == "org.quickshell" and .title == "Activity Monitor")).address // empty')
+if [[ $address =~ ^0x[0-9a-fA-F]+$ ]] &&
+   hyprctl dispatch "hl.dsp.focus({ window = \"address:$address\" })" >/dev/null; then
+  [[ $window_method != focus ]] || exit 0
+fi
+if [[ -f $config ]] && qs -p "$config" ipc call activityWindow "$window_method" >/dev/null 2>&1; then
+  exit 0
+fi
+if omarchy-shell stappmus.activity-monitor.window "$bar_method" >/dev/null 2>&1; then
+  exit 0
+fi
+
+# qs resolves qs.Ui and qs.Commons relative to the active config directory.
+# Use the installed shell kit so the independent window follows the desktop theme.
+install -d -m 700 "$runtime_dir"
+for module in Ui Commons; do
+  ln -sfnT "${OMARCHY_PATH:-/usr/share/omarchy}/shell/$module" "$runtime_dir/$module"
+done
+install -m 600 "$plugin_dir/launcher/Standalone.qml" "$config.new.$$"
+mv -f "$config.new.$$" "$config"
+export ACTIVITY_MONITOR_START_MODE="$window_method"
+export ACTIVITY_MONITOR_PANEL="$plugin_dir/Panel.qml"
+exec qs -d -n -p "$config"

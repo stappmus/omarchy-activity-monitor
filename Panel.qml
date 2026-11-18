@@ -1,6 +1,10 @@
 import QtQuick
+import QtCore as Core
 import QtQuick.Controls
+import Quickshell
+import Quickshell.Wayland
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
@@ -13,7 +17,37 @@ Panel {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
+  property bool standalone: false
+  readonly property var savedOptions: preferences.options
+  manageIpc: !standalone
+
+  Core.Settings {
+    id: preferences
+    location: "file://" + (Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config")
+      + "/omarchy/activity-monitor.ini"
+    property var options: ({})
+  }
+  function rememberOptions() {
+    if (bar && settings && Object.keys(settings).length > 0)
+      preferences.options = settings
+  }
+  onSettingsChanged: rememberOptions()
+  onBarChanged: rememberOptions()
+  ShellIpc {
+    target: "stappmus.activity-monitor.window"
+    enabled: !root.standalone
+    function open(): void { root.openWindow() }
+    function searchApps(): void { root.openAppSearch() }
+  }
+
+  property bool closingApps: false
+  function windowForRow(process) {
+    if (!closingApps || !process) return null
+    var windows = processActions.windowsByProcess[Model.processIdentityKey(process)]
+    return Model.matchingWindow(windows, processQuery) || (windows && windows[0]) || null
+  }
   property bool expanded: false
+  property bool detached: false
   property bool settingsOpen: false
   property bool settingsControlActive: false
   property bool hintsVisible: false
@@ -26,10 +60,10 @@ Panel {
   property Item searchField: null
   property var processViewport: null
 
-  readonly property color foreground: Color.popups.text
-  readonly property color accent: Color.accent
-  readonly property color urgent: Color.urgent
-  readonly property color dim: Color.muted
+  readonly property color foreground: Commons.Color.popups.text
+  readonly property color accent: Commons.Color.accent
+  readonly property color urgent: Commons.Color.urgent
+  readonly property color dim: Commons.Color.muted
   readonly property var snapshot: activity.snapshot
   readonly property var storageSnapshot: activity.storageSnapshot
   readonly property var gpuSnapshot: activity.gpuSnapshot
@@ -43,8 +77,8 @@ Panel {
   readonly property int processPidColumnWidth: Style.space(54)
   readonly property int processUserColumnWidth: Style.space(96)
   readonly property int processMetricColumnWidth: Style.space(66)
-  readonly property bool showProcessUserColumn: panel.contentWidth >= Style.space(650)
-  readonly property bool showProcessTimeColumn: panel.contentWidth >= Style.space(560)
+  readonly property bool showProcessUserColumn: keyCatcher.width >= Style.space(650)
+  readonly property bool showProcessTimeColumn: keyCatcher.width >= Style.space(560)
   readonly property string processPowerTooltip: !powerEstimatesEnabled
     ? "Process power estimates are disabled in Activity settings"
     : (processPowerUnavailable
@@ -92,7 +126,7 @@ Panel {
     ? Model.paintCoreLayout(metrics.cores, snapshot.topology, corePaintSizesExpanded, "expanded")
     : Model.emptyCorePaint()
   readonly property var sortedProcesses: expanded
-    ? Model.filterAndSortProcesses(processes, processQuery, sortKey, sortAscending)
+    ? Model.filterAndSortProcesses(processes, processQuery, sortKey, sortAscending, closingApps ? processActions.windowsByProcess : null)
     : []
   readonly property var topProcesses: expanded
     ? []
@@ -112,8 +146,97 @@ Panel {
     activity.refresh()
   }
 
+  function open() {
+    controller.show()
+    if (detached) focusDetachedWindow()
+  }
+
+  function toggle() {
+    if (detached) focusDetachedWindow()
+    else controller.toggle()
+  }
+
+  function openWindow() {
+    if (detached) {
+      focusDetachedWindow()
+      return
+    }
+    controller.show()
+    setSettingsOpen(false)
+    setExpanded(true)
+    if (standalone) {
+      detachedWindow.implicitWidth = panel.contentWidth
+      detachedWindow.implicitHeight = Style.space(640)
+      detached = true
+    } else {
+      Qt.callLater(detachExpandedView)
+    }
+  }
+
+  function openAppSearch() {
+    if (processActions.confirmationOpen) processActions.cancel()
+    openWindow()
+    if (settingsOpen) setSettingsOpen(false)
+    if (!expanded) setExpanded(true)
+    closingApps = true
+    processActions.refreshWindows()
+    processQuery = ""
+    if (searchField) searchField.clear()
+    cursorActive = true
+    selectProcess(0)
+    Qt.callLater(focusContent)
+  }
+
+  function focusContent() {
+    if (!closingApps || !searchField) {
+      keyCatcher.forceActiveFocus()
+      return
+    }
+    searchField.forceActiveFocus()
+    if (detached) {
+      var y = searchField.mapToItem(detachedContent, 0, 0).y
+      var viewport = windowScroll.contentItem
+      if (y < viewport.contentY || y + Style.space(130) > viewport.contentY + windowScroll.availableHeight)
+        viewport.contentY = Math.max(0, y - Style.spacing.md)
+    }
+  }
+
+  function focusDetachedWindow() {
+    detachedWindow.minimized = false
+    var windows = ToplevelManager.toplevels.values
+    for (var i = 0; i < windows.length; i++) {
+      if (windows[i].appId === Quickshell.appId && windows[i].title === detachedWindow.title) {
+        windows[i].activate()
+        return
+      }
+    }
+  }
+
+  function setDetached(value) {
+    if (!opened || detached === value) return
+    setSettingsOpen(false)
+    if (!expanded) setExpanded(true)
+    // Let the detailed page load and lay out before measuring its window.
+    if (value) Qt.callLater(detachExpandedView)
+    else detached = false
+  }
+
+  function detachExpandedView() {
+    if (!opened || detached) return
+    if (contentLoader.item) contentLoader.item.forceLayout()
+    detachedWindow.implicitWidth = panel.contentWidth
+    detachedWindow.implicitHeight = panel.contentHeight
+    detachedWindow.screen = panel.screen
+    // Keep the session open: the same content and sampler move between hosts.
+    detached = true
+    Qt.callLater(function() {
+      if (root.opened && !root.settingsControlActive) root.focusContent()
+    })
+  }
+
   function setExpanded(value) {
     if (!value && processActions.confirmationOpen) processActions.cancel()
+    if (!value) closingApps = false
     expanded = value
     cursorActive = false
     selectedProcessIndex = 0
@@ -127,16 +250,17 @@ Panel {
       sortAscending = false
     }
     Qt.callLater(function() {
-      if (root.opened && keyCatcher) keyCatcher.forceActiveFocus()
+      if (root.opened && keyCatcher) root.focusContent()
     })
   }
 
   function setSettingsOpen(value) {
+    if (value) closingApps = false
     settingsOpen = value
     settingsControlActive = value
     if (!value) {
       Qt.callLater(function() {
-        if (root.opened && keyCatcher) keyCatcher.forceActiveFocus()
+        if (root.opened && keyCatcher) root.focusContent()
       })
     }
   }
@@ -184,6 +308,15 @@ Panel {
     })
   }
 
+  function showBusiest(key) {
+    processQuery = ""
+    sortKey = key
+    sortAscending = false
+    setExpanded(true)
+    cursorActive = true
+    selectProcess(0)
+  }
+
   function setSort(nextKey) {
     if (nextKey === "power" && (!powerEstimatesEnabled || !processPower.available)) return
     if (sortKey === nextKey) sortAscending = !sortAscending
@@ -210,6 +343,8 @@ Panel {
   }
 
   function finishSearch() {
+    if (closingApps && searchField) searchField.clear()
+    closingApps = false
     if (searchField) searchField.focus = false
     keyCatcher.forceActiveFocus()
   }
@@ -252,6 +387,7 @@ Panel {
       delete entry.storageRefreshIntervalMs
     }
 
+    preferences.options = entry
     root.settings = entry
     if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
       root.bar.shell.updateEntryInline(root.moduleName, entry)
@@ -521,7 +657,7 @@ Panel {
     // Pointer events can arrive at the mouse polling rate. Once this row owns
     // the cursor, avoid coordinate mapping and QML property writes until the
     // pointer actually reaches a different row.
-    if (cursorActive && selectedProcessIndex === index) return
+    if (closingApps || (cursorActive && selectedProcessIndex === index)) return
     if (!pointerGate.moved(item, mouse)) return
     cursorActive = true
     selectProcess(index)
@@ -573,6 +709,9 @@ Panel {
       hintsVisible = false
       resetDriveSelection()
     } else {
+      closingApps = false
+      detached = false
+      if (standalone) Qt.callLater(Qt.quit)
       expanded = false
       settingsOpen = false
       settingsControlActive = false
@@ -595,7 +734,7 @@ Panel {
     active: root.opened
     enabled: !root.settingsOpen
     onConfirmationRequested: processConfirm.selectedIndex = 0
-    onFocusRequested: if (root.opened) keyCatcher.forceActiveFocus()
+    onFocusRequested: if (root.opened) root.focusContent()
     onRefreshRequested: activity.refreshProcessCycle()
   }
 
@@ -609,7 +748,7 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     text: "\uf201"
-    tooltipText: "Activity"
+    tooltipText: root.detached ? "Focus Activity Monitor" : "Activity"
     onPressed: function(buttonCode) { root.toggle() }
   }
 
@@ -618,8 +757,8 @@ Panel {
     anchorItem: button
     owner: root
     bar: root.bar
-    open: root.opened
-    focusTarget: keyCatcher
+    open: root.opened && !root.detached && !root.standalone
+    focusTarget: root.closingApps && root.searchField ? root.searchField : keyCatcher
     // Keep both layouts attached to the invoking widget. When the wider
     // layout reaches a screen edge, KeyboardPanel grows it inward instead of
     // moving the card to the center of the display.
@@ -633,8 +772,14 @@ Panel {
     contentHeight: panel.fittedContentHeight(
       contentLoader.item ? contentLoader.item.implicitHeight : Style.space(320))
 
+    Item {
+      id: popupContent
+      anchors.fill: parent
+    }
+
     PanelKeyCatcher {
       id: keyCatcher
+      parent: root.detached ? detachedContent : popupContent
       anchors.fill: parent
       blocked: !!(root.searchField && root.searchField.activeFocus) || root.settingsControlActive
 
@@ -673,7 +818,7 @@ Panel {
           processConfirm.selectedIndex = processConfirm.selectedIndex === 0 ? 1 : 0
           return
         }
-        root.switchPanel(direction)
+        if (!root.detached) root.switchPanel(direction)
       }
       onTextKey: function(text) {
         if (processActions.confirmationOpen) return
@@ -705,6 +850,7 @@ Panel {
 
       ConfirmDialog {
         id: processConfirm
+        parent: root.detached ? detachedWindow.contentItem : keyCatcher
         anchors.fill: parent
         opened: processActions.confirmationOpen
         z: 20
@@ -712,13 +858,39 @@ Panel {
           ? "Do you want to close " + processActions.pendingAction.name + "?"
           : ""
         confirmText: "Close"
-        background: Color.popups.background
+        background: Commons.Color.popups.background
         foreground: root.foreground
         selectedText: root.accent
         fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
         cornerRadius: Style.cornerRadius
         onCanceled: processActions.cancel()
         onConfirmed: processActions.confirm()
+      }
+    }
+  }
+
+  FloatingWindow {
+    id: detachedWindow
+    title: "Activity Monitor"
+    visible: root.opened && root.detached
+    color: Commons.Color.popups.background
+    minimumSize: Qt.size(Style.space(380), Style.space(240))
+    onClosed: root.close()
+
+    ScrollView {
+      id: windowScroll
+      anchors.fill: parent
+      anchors.margins: Style.spacing.popupPadding
+      clip: true
+      contentWidth: availableWidth
+      contentHeight: detachedContent.height
+      ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+      Item {
+        id: detachedContent
+        width: windowScroll.availableWidth
+        height: Math.max(windowScroll.availableHeight,
+          contentLoader.item ? contentLoader.item.implicitHeight : 0)
       }
     }
   }
@@ -752,6 +924,8 @@ Panel {
 
         MetricCard {
           width: (parent.width - parent.spacing) / 2
+          interactive: true
+          onActivated: root.showBusiest("cpu")
           label: root.cpuCardLabel()
           value: root.hasSnapshot ? root.percentText(root.metrics.cpu) : "—"
           detail: root.cpuCardDetail()
@@ -763,6 +937,8 @@ Panel {
 
         MetricCard {
           width: (parent.width - parent.spacing) / 2
+          interactive: true
+          onActivated: root.showBusiest("memory")
           label: root.memoryCardLabel()
           value: root.hasSnapshot ? root.percentText(root.metrics.memory) : "—"
           detail: root.memoryBreakdownText()
@@ -796,6 +972,8 @@ Panel {
           secondary: "\uf093  " + Model.formatBytes(root.metrics.diskWrite, "/s")
         }
       }
+
+      PressureSummary { width: parent.width }
 
       PanelSeparator {
         width: parent.width
@@ -889,7 +1067,7 @@ Panel {
 
           Text {
             width: parent.width
-            text: "Changes apply immediately and are saved with your Omarchy bar layout."
+            text: "Changes apply immediately."
             color: root.dim
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
@@ -1119,6 +1297,8 @@ Panel {
         }
       }
 
+      PressureSummary { width: parent.width }
+
       PanelSeparator {
         width: parent.width
         foreground: root.foreground
@@ -1144,7 +1324,7 @@ Panel {
         TextField {
           id: searchBox
           width: Math.max(Style.space(120), Math.min(Style.space(180), parent.width * 0.24))
-          placeholderText: "\uf002 Search"
+          placeholderText: root.closingApps ? "Search to close…" : "\uf002 Search"
           foreground: root.foreground
           accent: root.accent
           font.pixelSize: Style.font.bodySmall
@@ -1153,11 +1333,21 @@ Panel {
             root.processQuery = text
             root.selectedProcessIndex = 0
             root.selectedProcessKey = ""
-            root.cursorActive = false
+            root.cursorActive = root.closingApps
+            if (root.closingApps) root.selectProcess(0)
             pointerGate.reset()
           }
           Keys.onPressed: function(event) {
-            if (event.key === Qt.Key_Escape || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+            if (root.closingApps && (event.key === Qt.Key_Down || event.key === Qt.Key_Up)) {
+              root.moveProcess(event.key === Qt.Key_Down ? 1 : -1)
+              event.accepted = true
+            } else if (root.closingApps && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+              event.accepted = true
+              var row = root.selectedProcess
+              if (!event.isAutoRepeat && !processActions.readingWindows && row && root.cursorActive
+                  && root.selectedProcessKey === Model.processIdentityKey(row)
+                  && processActions.request(row, true, root.windowForRow(row))) root.finishSearch()
+            } else if (event.key === Qt.Key_Escape || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
               root.finishSearch()
               event.accepted = true
             }
@@ -1178,7 +1368,13 @@ Panel {
         id: processListHost
 
         width: parent.width
-        height: Style.space(300)
+        implicitHeight: Style.space(300)
+        // Use spare desktop-window height without feeding the page's own
+        // content height back into its layout. Leave room for the footer.
+        height: root.detached
+          ? Math.max(implicitHeight, windowScroll.availableHeight - y
+            - (expandedHint.visible ? expandedHint.implicitHeight + parent.spacing : 0))
+          : implicitHeight
         clip: true
 
         ListView {
@@ -1263,6 +1459,21 @@ Panel {
       anchors.verticalCenter: parent.verticalCenter
       spacing: Style.spacing.sm
 
+      Button {
+        visible: !root.standalone
+        text: root.detached ? "Attach" : "Detach"
+        tooltipText: root.detached ? "Return to the expanded bar view" : "Keep open as a desktop window"
+        anchors.verticalCenter: parent.verticalCenter
+        foreground: root.foreground
+        accent: root.accent
+        fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+        fontSize: Style.font.caption
+        verticalPadding: Style.spacing.sm
+        horizontalPadding: Style.spacing.sm
+        bordered: true
+        onClicked: root.setDetached(!root.detached)
+      }
+
       PanelActionButton {
         visible: !root.settingsOpen
         iconText: "\uf128"
@@ -1317,8 +1528,8 @@ Panel {
     readonly property bool showCores: !!(paint && Array.isArray(paint.cells) && paint.cells.length > 0)
     signal activated(int delta)
 
-    implicitHeight: Style.space(tall ? 124 : 92)
-    color: Style.normalFillFor(root.foreground, root.accent)
+    implicitHeight: Style.space(tall ? 138 : 112)
+    color: cardClick.containsMouse ? Style.hoverFillFor(root.foreground, root.accent) : Style.normalFillFor(root.foreground, root.accent)
     borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
     radius: Style.cornerRadius
 
@@ -1405,12 +1616,36 @@ Panel {
       anchors.bottom: parent.bottom
       anchors.leftMargin: Style.spacing.lg
       anchors.rightMargin: Style.spacing.lg
-      anchors.bottomMargin: Style.spacing.sm
-      height: Style.space(20)
+      anchors.bottomMargin: Style.spacing.sm + graphCaption.implicitHeight
+      height: Style.space(18)
+      id: graph
+      times: history.length ? root.metrics.sampleTimes.slice(-history.length) : []
       values: history
       ceiling: parent.ceiling
       lineColor: tone
       fillColor: Util.alpha(tone, 0.10)
+    }
+
+    Text {
+      id: graphCaption
+      anchors.left: graph.left
+      anchors.right: graph.right
+      anchors.top: graph.bottom
+      visible: graph.visible
+      textFormat: Text.PlainText
+      font.family: Style.font.family
+      font.pixelSize: Style.font.caption
+      color: root.dim
+      elide: Text.ElideRight
+      text: {
+        if (!graph.visible || !graph.times.length) return ""
+        if (graph.hoverIndex < 0) return Math.round(graph.span) + " s history"
+        const i = graph.hoverIndex
+        const age = Math.round(graph.times[graph.times.length - 1] - graph.times[i])
+        const amount = metricCard.ceiling === 100 ? Number(history[i]).toFixed(1) + "%"
+          : Model.formatBytes(history[i], "/s") + " total"
+        return age + " s ago · " + amount
+      }
     }
 
     Rectangle {
@@ -1449,6 +1684,27 @@ Panel {
         text: metricCard.tooltipText
         fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
       }
+    }
+  }
+
+  component PressureSummary: Text {
+    readonly property var pressure: root.snapshot.pressure
+    visible: text.length > 0
+    text: {
+      const waits = []
+      if (pressure.memory !== undefined) waits.push("memory " + pressure.memory.toFixed(1) + "%")
+      if (pressure.io !== undefined) waits.push("I/O " + pressure.io.toFixed(1) + "%")
+      return waits.length ? "Task stalls (10 s avg) · " + waits.join(" · ") : ""
+    }
+    textFormat: Text.PlainText
+    font.family: Style.font.family
+    font.pixelSize: Style.font.caption
+    color: root.dim
+    wrapMode: Text.WordWrap
+    HoverHandler { id: pressureHover }
+    PanelToolTip {
+      visible: pressureHover.hovered
+      text: "Share of time at least one task was waiting for memory or I/O, averaged over 10 seconds."
     }
   }
 
@@ -1690,6 +1946,7 @@ Panel {
 
   component ProcessRow: CursorSurface {
     property var processData: ({})
+    readonly property var appWindow: compact ? null : root.windowForRow(processData)
     property int rowIndex: -1
     property bool compact: false
     property bool selected: false
@@ -1697,7 +1954,7 @@ Panel {
     hasCursor: selected
     foreground: root.foreground
     accent: root.accent
-    implicitHeight: compact ? Style.space(34) : Style.space(28)
+    implicitHeight: compact || appWindow ? Style.space(34) : Style.space(28)
 
     Row {
       anchors.fill: parent
@@ -1724,9 +1981,9 @@ Panel {
         }
 
         Text {
-          visible: compact
+          visible: compact || !!appWindow
           width: parent.width
-          text: String(processData.user || "") + "  ·  " + String(processData.pid || "")
+          text: appWindow ? appWindow.app + " · " + appWindow.title : String(processData.user || "") + "  ·  " + String(processData.pid || "")
           textFormat: Text.PlainText
           color: root.dim
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -1786,7 +2043,12 @@ Panel {
       onPositionChanged: function(mouse) {
         if (!compact) root.selectProcessFromPointer(parent.rowIndex, parent, mouse)
       }
-      onClicked: root.requestCloseProcess(parent.processData, compact ? -1 : parent.rowIndex)
+      onClicked: {
+        if (root.closingApps && !compact) {
+          root.selectProcess(parent.rowIndex)
+          root.focusContent()
+        } else root.requestCloseProcess(parent.processData, compact ? -1 : parent.rowIndex)
+      }
     }
   }
 

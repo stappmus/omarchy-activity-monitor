@@ -31,6 +31,24 @@ omarchy plugin remove stappmus.activity-monitor
 
 ## Using it
 
+- Search the app launcher for **Activity Monitor** to open its detailed window. To install the launcher, run the following commands from the installed plugin directory.
+
+  ```bash
+  mkdir -p ~/.local/bin ~/.local/share/applications
+  ln -sfn "$PWD/launcher/launch" ~/.local/bin/stappmus-activity-monitor
+  install -m 644 launcher/stappmus.activity-monitor.desktop ~/.local/share/applications/
+  ```
+
+- To use **Super + Ctrl + Q**, add the following binding to `~/.config/hypr/bindings.lua` if that shortcut is available.
+
+  ```lua
+  o.bind("SUPER + CTRL + Q", "Activity Monitor: search apps to close", "stappmus-activity-monitor --close-app")
+  ```
+
+- Launch with `stappmus-activity-monitor --close-app` to focus the Processes search. Search by name, PID or window title. Use ↑/↓ to highlight a process and Enter to request closure of its displayed window, or send TERM to a windowless process. Esc leaves close mode.
+- Click CPU or RAM in the compact view to select the busiest process for that resource.
+- Hover over a graph to read the sample’s age and value. Network and disk graphs show combined traffic in both directions. Each open session starts a new history.
+- Task stalls show the kernel’s 10-second average for time with at least one task waiting for memory or I/O.
 - Click the bar icon to open. `e` expands, Esc collapses.
 - `/` search processes. `j` / `k` move. Click a column header to sort.
 - `s` opens settings — update speed, graph history, °C/°F, and whether to estimate process watts.

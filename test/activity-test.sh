@@ -113,9 +113,11 @@ assertEqual(
 assertEqual(afterHotplug.diskHistories['259:0'].length, 2, 'activity keeps per-disk sparkline history')
 
 const withHistory = activity.nextMetrics(second, second, {
+  sampleTimes: [998.25, 999.75],
   cpuHistory: [10, 20],
   memoryHistory: [30, 40]
 }, 2)
+assertDeepEqual(withHistory.sampleTimes, [999.75, 1001], 'graph times stay aligned as old samples expire')
 assertDeepEqual(withHistory.cpuHistory, [20, 0], 'activity caps history buffers')
 assertEqual(activity.counterPercent({ total: 100, idle: 20 }, { total: 50, idle: 10 }), 0, 'activity handles reset CPU counters')
 assertEqual(activity.counterRate(100, 50, 1), 0, 'activity handles reset byte counters')
@@ -131,7 +133,11 @@ const baseline = activity.baselineMetrics(second, {
 })
 assertEqual(baseline.cpu, 42, 'activity retains the last CPU rate while taking a fresh baseline')
 assertEqual(baseline.memory, 65, 'activity immediately refreshes single-sample memory usage')
-assertDeepEqual(baseline.cpuHistory, [20, 42], 'activity does not add zeroes while taking a fresh baseline')
+assertDeepEqual(baseline.cpuHistory, [], 'a new session does not graph across the closed interval')
+assertDeepEqual(baseline.sampleTimes, [], 'new session resets the graph clock')
+assertDeepEqual(activity.parseSnapshot('pressure\tmemory\t0\npressure\tio\t13.5').pressure,
+  {memory: 0, io: 13.5}, 'pressure distinguishes a measured zero from missing data')
+assertDeepEqual(activity.parseSnapshot('pressure\tio\tinvalid').pressure, {}, 'invalid pressure stays unavailable')
 
 const firstProcesses = activity.parseProcessSnapshot([
   'schema\tactivity-processes\t1',
@@ -175,6 +181,11 @@ assertDeepEqual(
   [2],
   'activity filters processes by name and user'
 )
+const editor = {pid: 42, startTicks: 1234, name: 'editor'}
+const reused = {pid: 42, startTicks: 9876, name: 'other'}
+const windows = {'42:1234': [{app: 'Text Editor', title: 'Meeting notes'}]}
+assertDeepEqual(activity.filterAndSortProcesses([editor, reused], 'meeting', 'cpu', false, windows),
+  [editor], 'window title search selects the owning process and checks its start time')
 assertEqual(
   activity.processIdentityKey({ pid: 42, startTicks: 1234 }),
   '42:1234',
@@ -512,7 +523,7 @@ grep -Eq '^process[[:space:]]' <<<"$process_snapshot" || fail "activity process 
 pass "activity collector emits the process snapshot contract"
 
 [[ -x $ROOT/activity-sampler ]] || fail "native activity sampler is executable"
-[[ $("$ROOT/activity-sampler" --version) == "activity-sampler 2.1.1" ]] ||
+[[ $("$ROOT/activity-sampler" --version) == "activity-sampler 2.2.0" ]] ||
   fail "native activity sampler reports the release protocol version"
 [[ ! -e $ROOT/activity-process-stats ]] ||
   fail "legacy process helper remains beside the unified native sampler"
@@ -798,7 +809,7 @@ fi
 if grep -Fq 'Style.space(720)' "$panel_file" || grep -Fq 'Style.space(560))' "$panel_file"; then
   fail "activity still caps the window below the height of keyboard hints"
 fi
-grep -Fq 'height: Style.space(300)' "$panel_file" ||
+grep -Fq 'implicitHeight: Style.space(300)' "$panel_file" ||
   fail "activity expanded process list is not a stable height while hints open"
 if grep -Fq 'Preview CPU layouts' "$panel_file" || grep -Fq 'layoutPreviewContent' "$panel_file"; then
   fail "activity still ships the CPU layout preview in the production panel"
@@ -822,7 +833,7 @@ if grep -Fq 'text: "POWER"' "$panel_file"; then
 fi
 pass "activity clearly labels and sorts estimated per-process CPU power"
 
-grep -Fq 'if (cursorActive && selectedProcessIndex === index) return' "$panel_file" ||
+grep -Fq 'if (closingApps || (cursorActive && selectedProcessIndex === index)) return' "$panel_file" ||
   fail "activity process rows remap pointer coordinates after already being selected"
 grep -Fq 'hoverEnabled: !compact' "$panel_file" ||
   fail "activity compact process rows subscribe to unused hover movement"
@@ -842,7 +853,7 @@ grep -Fq 'ProcessActionController {' "$panel_file" &&
   grep -Fq 'enabled: !root.settingsOpen' "$panel_file" ||
   fail "activity panel does not delegate guarded app actions to their controller"
 grep -Fq 'function requestCloseProcess(process, index)' "$panel_file" &&
-  grep -Fq 'onClicked: root.requestCloseProcess(parent.processData, compact ? -1 : parent.rowIndex)' "$panel_file" ||
+  grep -Fq 'else root.requestCloseProcess(parent.processData, compact ? -1 : parent.rowIndex)' "$panel_file" ||
   fail "activity process rows do not confirm close on left click"
 if grep -Fq 'id: endProcessButton' "$panel_file" || grep -Fq 'id: endProcessHost' "$panel_file"; then
   fail "activity still shows a separate End app button"

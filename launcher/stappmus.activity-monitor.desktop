@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Activity Monitor
+Comment=Inspect processes and system resource use
+Icon=utilities-system-monitor
+Exec=stappmus-activity-monitor
+Terminal=false
+Categories=System;Monitor;
+Keywords=CPU;Memory;Processes;Performance;

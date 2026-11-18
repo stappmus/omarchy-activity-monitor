@@ -18,6 +18,9 @@ Item {
   readonly property string signalHelperPath: decodeURIComponent(
     String(Qt.resolvedUrl("process-signal")).replace("file://", ""))
 
+  readonly property string windowHelperPath: decodeURIComponent(
+    String(Qt.resolvedUrl("app-windows")).replace("file://", ""))
+
   readonly property string currentUser: Quickshell.env("USER") || Quickshell.env("LOGNAME")
   readonly property bool confirmationOpen: _pendingAction !== null
   readonly property var pendingAction: _pendingAction
@@ -34,11 +37,30 @@ Item {
   signal focusRequested()
   signal refreshRequested()
 
+  property var windowsByProcess: ({})
+  Process {
+    id: windowReader
+    command: [root.windowHelperPath, "list"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try { root.windowsByProcess = JSON.parse(text) }
+        catch (e) { root.windowsByProcess = ({}) }
+      }
+    }
+  }
+
+  readonly property bool readingWindows: windowReader.running
+
+  function refreshWindows() {
+    windowsByProcess = ({})
+    windowReader.running = true
+  }
+
   function blockReason(process) {
     return Model.processActionBlockReason(process, currentUser)
   }
 
-  function request(process) {
+  function request(process, directClose, window) {
     if (!active || !enabled || running) return false
 
     var reason = blockReason(process)
@@ -54,6 +76,14 @@ Item {
     _failed = false
     _status = ""
     clearStatus.stop()
+    if (directClose) {
+      _activeAction = { name: window ? (window.title || window.app) : process.name, directClose: true }
+      _status = "Closing " + _activeAction.name + "…"
+      signalProc.command = [windowHelperPath, "close", String(process.pid), String(process.startTicks),
+                            window ? String(window.id) : ""]
+      signalProc.running = true
+      return true
+    }
     _pendingAction = {
       pid: Number(process.pid),
       startTicks: Number(process.startTicks),
@@ -100,6 +130,7 @@ Item {
       if (exitCode === 0) {
         _failed = false
         if (!action) _status = "App ended"
+        else if (action.directClose) _status = "Close requested for " + action.name
         else if (disposition === "graceful") _status = "Closed " + action.name
         else if (disposition === "escalated") _status = "Force-closed " + action.name
         else _status = "Ended " + action.name

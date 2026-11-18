@@ -1,0 +1,55 @@
+#!/usr/bin/python
+"""Attach window titles to process rows and close the selected row."""
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+
+def process_key(pid):
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_bytes()
+        start = int(stat.rsplit(b") ", 1)[1].split()[19])
+    except (OSError, IndexError, ValueError):
+        return None
+    return f"{pid}:{start}"
+
+
+def windows():
+    clients = json.loads(subprocess.check_output(["hyprctl", "clients", "-j"]))
+    return [c for c in sorted(clients, key=lambda c: c["focusHistoryID"])
+            if c["mapped"] and re.fullmatch(r"0x[0-9a-fA-F]+", c["address"])]
+
+
+def close(pid, start, window_id):
+    if process_key(pid) != f"{pid}:{start}":
+        sys.exit("The selected process has already exited")
+    owned = [c for c in windows() if c["pid"] == pid]
+    if window_id:
+        for client in owned:
+            if str(client["stableId"]) == window_id:
+                subprocess.run(["hyprctl", "dispatch",
+                                f'hl.dsp.window.close({{ window = "address:{client["address"]}" }})'],
+                               check=True, stdout=subprocess.DEVNULL)
+                return
+        sys.exit("The selected window has already closed")
+    if owned:
+        sys.exit("The process has opened a window. Search again to select it.")
+    helper = Path(__file__).with_name("process-signal")
+    os.execv(helper, [str(helper), "TERM", str(pid), str(start)])
+
+
+if sys.argv[1:] == ["list"]:
+    result = {}
+    for client in windows():
+        key = process_key(client["pid"])
+        if key:
+            result.setdefault(key, []).append(dict(id=str(client["stableId"]), app=client["class"],
+                                                   title=client["title"]))
+    print(json.dumps(result))
+elif len(sys.argv) == 5 and sys.argv[1] == "close":
+    close(int(sys.argv[2]), int(sys.argv[3]), sys.argv[4])
+else:
+    sys.exit(2)

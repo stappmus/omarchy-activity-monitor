@@ -15,7 +15,7 @@ file "$ROOT/activity-sampler" | grep -Fq 'ELF 64-bit' ||
   fail "activity sampler is not a native 64-bit executable"
 [[ $(stat -c %s "$ROOT/activity-sampler") -lt 524288 ]] ||
   fail "activity sampler binary exceeds its 512 KiB size budget"
-[[ $("$ROOT/activity-sampler" --version) == 'activity-sampler 2.1.1' ]] ||
+[[ $("$ROOT/activity-sampler" --version) == 'activity-sampler 2.2.0' ]] ||
   fail "activity sampler binary does not match its source release"
 readelf -lW "$ROOT/activity-sampler" | grep -Fq 'GNU_RELRO' ||
   fail "activity sampler is missing RELRO hardening"

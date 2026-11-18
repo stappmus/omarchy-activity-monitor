@@ -11,6 +11,7 @@ function emptySnapshot() {
   return {
     schema: 0,
     sample: 0,
+    pressure: {},
     cpuFrequencyMHz: -1,
     memorySpeedMTs: -1,
     cpu: { total: 0, idle: 0 },
@@ -41,6 +42,7 @@ function emptyMetrics() {
     diskWrite: 0,
     networkInterface: "",
     cores: [],
+    sampleTimes: [],
     cpuHistory: [],
     memoryHistory: [],
     networkHistory: [],
@@ -179,6 +181,9 @@ function parseSnapshot(raw) {
         swapFree: number(fields[4]) * 1024,
         cached: number(fields[5]) * 1024
       }
+    } else if (kind === "pressure" && (fields[1] === "memory" || fields[1] === "io")) {
+      var percent = fields[2] ? Number(fields[2]) : NaN
+      if (percent >= 0 && percent <= 100) snapshot.pressure[fields[1]] = percent
     } else if (kind === "tasks") {
       snapshot.tasks = {
         running: number(fields[1]),
@@ -889,12 +894,14 @@ function baselineMetrics(current, existing) {
     diskWrite: number(old.diskWrite),
     networkInterface: network ? network.name : String(old.networkInterface || ""),
     cores: oldCores.length > 0 ? oldCores : coreUsage(null, current),
-    cpuHistory: Array.isArray(old.cpuHistory) ? old.cpuHistory.slice() : [],
-    memoryHistory: Array.isArray(old.memoryHistory) ? old.memoryHistory.slice() : [],
-    networkHistory: Array.isArray(old.networkHistory) ? old.networkHistory.slice() : [],
-    diskHistory: Array.isArray(old.diskHistory) ? old.diskHistory.slice() : [],
+    // The sampler sleeps while closed. Start fresh graphs at the new baseline.
+    sampleTimes: [],
+    cpuHistory: [],
+    memoryHistory: [],
+    networkHistory: [],
+    diskHistory: [],
     diskDevices: Array.isArray(old.diskDevices) ? old.diskDevices.slice() : [],
-    diskHistories: copyNumberArrays(old.diskHistories)
+    diskHistories: {}
   }
 }
 
@@ -932,6 +939,7 @@ function nextMetrics(previous, current, existing, historyLimit) {
     diskWrite: disks.write,
     networkInterface: network ? network.name : "",
     cores: coreUsage(previous, current),
+    sampleTimes: appendHistory(old.sampleTimes, current.sample, historyLimit),
     cpuHistory: appendHistory(old.cpuHistory, cpu, historyLimit),
     memoryHistory: appendHistory(old.memoryHistory, memory, historyLimit),
     networkHistory: appendHistory(old.networkHistory, download + upload, historyLimit),
@@ -1691,12 +1699,21 @@ function processValue(process, key) {
   return number(process.cpu)
 }
 
-function filterAndSortProcesses(processes, query, sortKey, ascending) {
+function matchingWindow(windows, query) {
+  if (!windows || !windows.length) return null
+  var needle = String(query || "").trim().toLowerCase()
+  return windows.find(function(w) {
+    return (w.app + " " + w.title).toLowerCase().indexOf(needle) >= 0
+  }) || null
+}
+
+function filterAndSortProcesses(processes, query, sortKey, ascending, windowsByProcess) {
   var values = Array.isArray(processes) ? processes.slice() : []
   var needle = String(query || "").trim().toLowerCase()
   if (needle) {
     values = values.filter(function(process) {
-      return String(process.pid).indexOf(needle) >= 0
+      return (windowsByProcess && matchingWindow(windowsByProcess[processIdentityKey(process)], needle))
+        || String(process.pid).indexOf(needle) >= 0
         || String(process.name || "").toLowerCase().indexOf(needle) >= 0
         || String(process.user || "").toLowerCase().indexOf(needle) >= 0
     })

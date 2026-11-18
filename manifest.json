@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "stappmus.activity-monitor",
   "name": "Activity Monitor",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "author": "Kristoffer Haugland",
   "license": "MIT",
   "description": "A calm, low-overhead glance at CPU, memory, GPU, storage, and processes — with a die that matches your chip",
