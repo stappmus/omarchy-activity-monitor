@@ -13,6 +13,7 @@ function emptySnapshot() {
     sample: 0,
     pressure: {},
     cpuFrequencyMHz: -1,
+    cpuName: "",
     memorySpeedMTs: -1,
     cpu: { total: 0, idle: 0 },
     cores: [],
@@ -168,6 +169,8 @@ function parseSnapshot(raw) {
         total: counters.total,
         idle: counters.idle
       })
+    } else if (kind === "cpu-name") {
+      snapshot.cpuName = String(fields[1] || "")
     } else if (kind === "frequency") {
       if (fields[1] === "cpu")
         snapshot.cpuFrequencyMHz = Math.max(-1, number(fields[2], -1))
