@@ -29,6 +29,14 @@ omarchy plugin disable stappmus.activity-monitor
 omarchy plugin remove stappmus.activity-monitor
 ```
 
+On aarch64 (Apple Silicon / Asahi), rebuild the helper after install. The
+published `activity-sampler` binary is x86_64 and crashes before the panel
+can show any stats (`jemalloc: Unsupported system page size`):
+
+```bash
+make -C ~/.config/omarchy/plugins/stappmus.activity-monitor -B activity-sampler
+```
+
 ## Using it
 
 - Search the app launcher for **Activity Monitor** to open its detailed window. To install the launcher, run the following commands from the installed plugin directory.
