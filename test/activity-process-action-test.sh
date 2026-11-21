@@ -489,7 +489,8 @@ for stat_file in /proc/[0-9]*/stat; do
   stat_tail="${stat_line##*) }"
   read -r -a stat_fields <<<"$stat_tail"
   ((${#stat_fields[@]} > 19)) || continue
-  if ((stat_fields[6] & 0x00200000)); then
+  # Early kernel threads can report start time 0, which the helper rejects as malformed.
+  if ((stat_fields[6] & 0x00200000 && stat_fields[19] > 0)); then
     kernel_thread_pid="${stat_file%/stat}"
     kernel_thread_pid="${kernel_thread_pid##*/}"
     kernel_thread_start="${stat_fields[19]}"
