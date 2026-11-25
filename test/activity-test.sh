@@ -515,6 +515,46 @@ grep -Eq '^sample[[:space:]][0-9]+([.][0-9]+)?$' <<<"$gpu_snapshot" ||
   fail "activity GPU collector emits a monotonic sample"
 pass "activity collector emits the independent GPU snapshot contract"
 
+asahi_root=$(mktemp -d)
+asahi_dev="$asahi_root/sys/devices/platform/gpu"
+asahi_display="$asahi_root/sys/devices/platform/display"
+mkdir -p "$asahi_dev" "$asahi_display" "$asahi_root/proc/device-tree" \
+  "$asahi_root/sys/bus/platform/drivers/asahi" "$asahi_root/sys/bus/platform/drivers/apple-drm" \
+  "$asahi_root/sys/class/drm/card1" "$asahi_root/sys/class/drm/card2"
+ln -s "$asahi_root/sys/bus/platform/drivers/asahi" "$asahi_dev/driver"
+ln -s "$asahi_root/sys/bus/platform/drivers/apple-drm" "$asahi_display/driver"
+ln -s "$asahi_dev" "$asahi_root/sys/class/drm/card1/device"
+ln -s "$asahi_display" "$asahi_root/sys/class/drm/card2/device"
+printf 'Apple MacBook Air (M1, 2020)\0' >"$asahi_root/proc/device-tree/model"
+write_agx_stats() {
+  printf 'busy_ns %s\njobs 1\npstate 6\npower_mw 6000\nutil1 0\n' "$1" >"$asahi_dev/agx_stats"
+}
+write_agx_stats 1000
+asahi_out=$(
+  {
+    echo gpus
+    sleep 0.2
+    echo gpus
+    sleep 0.2
+    write_agx_stats 100000000000
+    echo gpus
+    sleep 0.2
+  } | OMARCHY_SYSTEM_STATS_SYS_PATH="$asahi_root/sys" \
+    OMARCHY_SYSTEM_STATS_PROC_PATH="$asahi_root/proc" \
+    "$ROOT/activity-stats" --activity-reader
+)
+rm -rf -- "$asahi_root"
+mapfile -t asahi_rows < <(grep -E '^gpu'$'\t' <<<"$asahi_out")
+[[ ${#asahi_rows[@]} -eq 3 ]] ||
+  fail "activity GPU collector reports exactly one Apple GPU and skips the display controller"
+[[ ${asahi_rows[0]} == $'gpu\tcard1\tApple\tasahi\tApple M1 GPU\t-1\t'* ]] ||
+  fail "activity GPU collector names the Apple GPU and has no utilization before a second sample"
+[[ ${asahi_rows[1]} == $'gpu\tcard1\tApple\tasahi\tApple M1 GPU\t0\t'* ]] ||
+  fail "activity GPU collector reports 0% for an idle Apple GPU"
+[[ ${asahi_rows[2]} == $'gpu\tcard1\tApple\tasahi\tApple M1 GPU\t100\t'* ]] ||
+  fail "activity GPU collector clamps Apple GPU utilization to 100%"
+pass "activity GPU collector derives Apple AGX utilization from busy_ns"
+
 process_snapshot=$("$ROOT/activity-stats" --activity-processes)
 grep -Eq '^schema[[:space:]]+activity-processes[[:space:]]+1$' <<<"$process_snapshot" || fail "activity process collector emits its schema"
 grep -Eq '^sample[[:space:]][0-9]+([.][0-9]+)?[[:space:]][0-9]+[[:space:]][0-9]+$' <<<"$process_snapshot" ||

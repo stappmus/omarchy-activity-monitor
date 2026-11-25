@@ -1381,7 +1381,37 @@ struct GpuAdapter {
   std::int64_t memory_total = -1;
   std::string memory_kind = "unknown";
   double frequency_mhz = -1;
+  // Apple AGX (Asahi): busy_ns from agx_stats is cumulative, so keep the
+  // previous sample to turn it into a utilization percentage.
+  bool has_prev_busy = false;
+  std::uint64_t prev_busy_ns = 0;
+  std::chrono::steady_clock::time_point prev_busy_time;
 };
+
+std::optional<std::uint64_t> ReadAgxBusyNs(const std::string &device_path) {
+  std::ifstream input(Join(device_path, "agx_stats"));
+  std::string key;
+  std::uint64_t value = 0;
+  while (input >> key >> value) {
+    if (key == "busy_ns")
+      return value;
+  }
+  return std::nullopt;
+}
+
+std::string AppleChipName(const std::string &proc_path) {
+  // /proc/device-tree/model looks like "Apple MacBook Air (M1, 2020)".
+  const auto model = ReadLine(Join(proc_path, "device-tree/model"));
+  if (!model)
+    return "Apple";
+  const auto open = model->find("(M");
+  if (open == std::string::npos)
+    return "Apple";
+  std::size_t end = open + 1;
+  while (end < model->size() && (*model)[end] != ',' && (*model)[end] != ')')
+    ++end;
+  return "Apple " + model->substr(open + 1, end - open - 1);
+}
 
 struct NvidiaReading {
   std::string id;
@@ -1719,12 +1749,19 @@ private:
       gpu.vendor = GpuVendor(gpu.vendor_hex);
       const std::string driver_path = RealPath(Join(device_path, "driver"));
       gpu.driver = driver_path.empty() ? "unknown" : BaseName(driver_path);
+      // Apple Silicon: the display controller (apple-drm) is not a GPU.
+      if (gpu.driver == "apple-drm")
+        continue;
+      if (gpu.driver == "asahi")
+        gpu.vendor = "Apple";
       gpu.name = ReadLine(Join(device_path, "product_name")).value_or("");
       if (gpu.name.empty()) {
         const std::string device_hex =
             NormalizeHex(ReadLine(Join(device_path, "device")).value_or(""));
         gpu.name = PciDeviceName(gpu.vendor_hex, device_hex);
       }
+      if (gpu.name.empty() && gpu.driver == "asahi")
+        gpu.name = AppleChipName(paths_.proc) + " GPU";
       if (gpu.name.empty())
         gpu.name = gpu.vendor + " GPU";
       adapters_.push_back(std::move(gpu));
@@ -1741,6 +1778,26 @@ private:
       gpu.memory_total = -1;
       gpu.memory_kind = "unknown";
       gpu.frequency_mhz = -1;
+
+      if (gpu.driver == "asahi") {
+        const auto busy_ns = ReadAgxBusyNs(gpu.device_path);
+        const auto now = std::chrono::steady_clock::now();
+        if (busy_ns) {
+          if (gpu.has_prev_busy && *busy_ns >= gpu.prev_busy_ns) {
+            const double elapsed_ns = static_cast<double>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    now - gpu.prev_busy_time)
+                    .count());
+            if (elapsed_ns > 0)
+              gpu.utilization = std::min(
+                  100.0, 100.0 * static_cast<double>(*busy_ns - gpu.prev_busy_ns) /
+                             elapsed_ns);
+          }
+          gpu.has_prev_busy = true;
+          gpu.prev_busy_ns = *busy_ns;
+          gpu.prev_busy_time = now;
+        }
+      }
 
       if (gpu.vendor_hex == "1002") {
         const auto busy = ReadLine(Join(gpu.device_path, "gpu_busy_percent"));
